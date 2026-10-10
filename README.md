@@ -13,7 +13,7 @@ The SEAF artillery fires the shells you loaded into it, one per call-in, in the 
 - Once the SEAF Artillery objective is done, open your stratagem list: to the right of the **SEAF Artillery** row there is an icon for **every shell still loaded, in firing order**.
 - The **next shell** (the one your next call-in fires) is at the front, on a yellow bar.
 - Fire one and its icon drops off; the rest move up.
-- **Fixes the game's shell name:** the game's own "SEAF ARTILLERY: <shell>" name only gets set when the stratagem lands in your list, so after a shot it can keep naming a shell that was already fired. The mod has the game redo that name whenever the next shell changes, so it always names the shell your next call-in really fires (in your game's language).
+- **Fixes the game's shell name:** the game's own `SEAF ARTILLERY: <shell>` name only gets set when the stratagem lands in your list, so after a shot it can keep naming a shell that was already fired. The mod has the game redo that name whenever the next shell changes, so it always names the shell your next call-in really fires (in your game's language).
 - Each shell type has its own color, like the shells in game: Explosive (olive tip), High-Yield Explosive (orange), Mini Nuke (black with a yellow band), Napalm (red), Smoke (gray) and Static Field (blue).
 - It only shows while the stratagem list is open; the rest of the time nothing is added to your screen.
 - It follows the game's own list: it slides in and fades with it, and sits in the right place at any resolution and HUD scale.
@@ -25,7 +25,7 @@ The SEAF artillery fires the shells you loaded into it, one per call-in, in the 
 No options in the mod manager: install it and it works. With [Mod Options Menu](https://www.nexusmods.com/helldivers2/mods/16625) installed, two toggles under ESC > MODS > SEAF ARTILLERY LOADOUT (both on to start):
 
 - **Show the loaded shells**: the shell icons.
-- **Fix the next-shell name**: has the game redo the "SEAF ARTILLERY: <shell>" name when the next shell changes.
+- **Fix the next-shell name**: has the game redo the `SEAF ARTILLERY: <shell>` name when the next shell changes.
 
 With both off the mod reads and draws nothing.
 
