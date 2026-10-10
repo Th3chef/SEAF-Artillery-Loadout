@@ -1,0 +1,47 @@
+name: Bug report
+description: The shell icons are missing, wrong or in the wrong place, or the mod doesn't work as described
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report! Please attach SeafArtilleryLoadout.log and BingusSharedLoader.log (in %LOCALAPPDATA%\CowboyBingus\Helldivers2\Logs). SeafArtilleryLoadout.log shows whether it found what it needs in the game's code, and which shells it saw loaded.
+  - type: input
+    id: version
+    attributes:
+      label: Mod version
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: game_type
+    attributes:
+      label: Your game
+      options:
+        - Solo
+        - Hosting (others joined my game)
+        - Joined someone else's game
+    validations:
+      required: true
+  - type: input
+    id: options
+    attributes:
+      label: Options and other HUD mods
+      description: Is "Show the loaded shells" on in Mod Options Menu (if you use it)? Do you use a HUD mod such as HD2 HUD+?
+  - type: input
+    id: game
+    attributes:
+      label: Game version / date of the last game update
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected and what happened instead (which shells were loaded, if you know), and about when (the log has times). A screenshot of the stratagem list helps.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Drag SeafArtilleryLoadout.log, BingusSharedLoader.log and any screenshots here.
