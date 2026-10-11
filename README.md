@@ -4,7 +4,7 @@
 
 *Know what the guns have loaded.*
 
-**Download:** `SEAF-Artillery-Loadout-1.0.0.zip` from the [latest release](https://github.com/Th3chef/SEAF-Artillery-Loadout/releases/latest) (not the source code). Needs [Bingus Shared Loader](https://www.nexusmods.com/helldivers2/mods/16292) v19 or newer.
+**Download:** `SEAF-Artillery-Loadout-1.0.1.zip` from the [latest release](https://github.com/Th3chef/SEAF-Artillery-Loadout/releases/latest) (not the source code). Needs [Bingus Shared Loader](https://www.nexusmods.com/helldivers2/mods/16292) v19 or newer.
 
 The SEAF artillery fires the shells you loaded into it, one per call-in, in the order they went in. The game only tells you the next one ("SEAF ARTILLERY: EXPLOSIVE"), so after a few shots it's easy to lose track of what's left: is the Mini Nuke still in there, or was that the last High-Yield? This mod shows you the whole loadout, right next to the stratagem.
 
@@ -37,7 +37,7 @@ Optional: [Mod Options Menu](https://www.nexusmods.com/helldivers2/mods/16625) f
 ## Install / update
 
 1. Install [Bingus Shared Loader](https://www.nexusmods.com/helldivers2/mods/16292) v19 or newer if you don't have it.
-2. Mod manager (Arsenal / HD2 Mod Manager): add `SEAF-Artillery-Loadout-1.0.0.zip` and enable it, then **Purge** and **Deploy**.
+2. Mod manager (Arsenal / HD2 Mod Manager): add `SEAF-Artillery-Loadout-1.0.1.zip` and enable it, then **Purge** and **Deploy**.
 
 ## Uninstall
 
