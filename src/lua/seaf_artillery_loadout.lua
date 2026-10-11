@@ -6,7 +6,7 @@
 -- that name when the row gets a new stratagem, so after a shot it can keep naming a shell that was already fired.
 -- That is its only write to game memory (one value in the HUD's own row, which the game sets back on its next
 -- update); everything else is read only. It finds the game's addresses again by itself after a game update.
-local VERSION = '1.0.0'
+local VERSION = '1.0.1'
 local TEST_BUILD = false      -- numbered test builds: the log goes to Logs\test
 local TESTER = false          -- the release's Tester build: more detail in the log
 
@@ -194,16 +194,22 @@ local P = {
   hud_c = { { p = '498d8e????????448bc5410f28c8e8????????', at = 3 } },
   open = { { p = '410fb68e????????0fb6c184c974204138b6????????', at = 4 } },
   rowbase = { { p = '488dbe????????4c8db6????????41bc10000000', at = 10 } },
+  -- ((1.0.1 review) the distance between the rows, from the same 16-row loop's two pointer steps (both must agree, and
+  -- the match must sit just after rowbase's); not found: the known one, and a row only counts when it is the only one
+  -- with the SEAF id)
+  rowstride = { { p = '440a3f488dbf????????4981c6????????4983ec0175', at = 6, also = 13 } },
   -- the name fix (optional): where the game's row update keeps the row's stratagem id, read as the old id and then
   -- overwritten with the new one (the name is only redone when they differ); both offsets must agree
   rowid_r = { { p = '418b87????????4b8d0c764c8b55??4803c98945??418b94ca????????418997????????', at = 3 } },
   rowid_w = { { p = '418b87????????4b8d0c764c8b55??4803c98945??418b94ca????????418997????????', at = 32 } },
 }
-local OPTIONAL = { rowid_r = true, rowid_w = true }
-local P_ORDER = { 'rack', 'proj', 'hud', 'hud_a', 'hud_b', 'hud_c', 'open', 'rowbase', 'rowid_r', 'rowid_w' }
--- what the 2026-09-24 build had (a cross-check: the log says what moved)
+local OPTIONAL = { rowid_r = ' (name fix off)', rowid_w = ' (name fix off)', rowstride = ' (rows checked by their SEAF id)' }
+local P_ORDER = { 'rack', 'proj', 'hud', 'hud_a', 'hud_b', 'hud_c', 'open', 'rowbase', 'rowstride', 'rowid_r', 'rowid_w' }
+-- what the September 2026 game build has (game.dll 6ab3b43f, checked against its runtime dump); a cross-check: the
+-- log says what moved
 local KNOWN = { rack = 0x3326710, proj = 0x37c7670, hud = 0x346d538, hud_a = 0x24e340, hud_b = 0x146dc0,
-  hud_c = 0x1040, open = 0x38769, rowbase = 0x110, rowid_r = 0x374c, rowid_w = 0x374c }
+  hud_c = 0x1040, open = 0x38769, rowbase = 0x110, rowstride = 0x3760, rowid_r = 0x374c, rowid_w = 0x374c }
+local KNOWN_BUILD = '6ab3b43f-04744000-0210fa93'   -- that build's game.dll (time stamp, image size, code size)
 local CACHE = LOGDIR and (LOGDIR .. '\\' .. LOGNAME .. '.cache') or nil
 
 local function cache_load()
@@ -216,12 +222,72 @@ local function cache_load()
   local ok, t = pcall(fn)
   return ok and type(t) == 'table' and t or nil
 end
-local function cache_save(key, found)
+-- ((1.0.1 review) the cache keeps where each item's pattern matched (pattern number:offset in the code), so a
+-- cached layout is only used after those bytes were read again and still match their patterns and give the same values)
+local function cache_save(key, found, at)
   if not CACHE then return end
   local f = io.open(CACHE, 'w'); if not f then return end
   local t = {}
-  for _, k in ipairs(P_ORDER) do t[#t + 1] = string.format('%s=%d', k, found[k] or -1) end
+  for _, k in ipairs(P_ORDER) do t[#t + 1] = string.format('%s=%d,m_%s=%q', k, found[k] or -1, k, at[k] or '') end
   f:write(string.format('{key=%q,%s}', key, table.concat(t, ','))); f:close()
+end
+
+-- an item's value at match o of text (rva: the game address of text's first byte); nil when its two places disagree
+local function value_at(text, o, p, rva)
+  local v = p.rip and (rva + o + p.at + 4 + si32(text, o + p.at)) or su32(text, o + p.at)
+  if p.also and su32(text, o + p.also) ~= v then return nil end
+  return v
+end
+local function matches_at(text, segs)
+  for j = 1, #segs do
+    local seg = segs[j]
+    if text:sub(seg[1] + 1, seg[1] + #seg[2]) ~= seg[2] then return false end
+  end
+  return true
+end
+local function cache_check(G, c)        -- the cached layout, each match read again from the game's code; nil: rescan
+  local found, at = {}, {}
+  for _, k in ipairs(P_ORDER) do
+    local v, m = c[k], c['m_' .. k]
+    if type(v) ~= 'number' or type(m) ~= 'string' or (v ~= -1) ~= (m ~= '') then return nil end
+    for pi, o in m:gmatch('(%d+):(%d+)') do
+      local p = P[k][tonumber(pi)]
+      if not p then return nil end
+      o = tonumber(o)
+      local segs, _, n = compile(p.p)
+      if o + n > G.code.size or not fetch(G.base + G.code.rva + o, n) then return nil end
+      local text = bstr(0, n)
+      if not matches_at(text, segs) or value_at(text, 0, p, G.code.rva + o) ~= v then return nil end
+    end
+    found[k], at[k] = v, m
+  end
+  return found, at
+end
+-- plausibility (on the scan and on the cache): the offsets inside the HUD are small, the open flag sits after the
+-- list; the row stride's match is the row loop's (just after rowbase's) and the row id fits in a row. An optional item
+-- that fails is dropped (-1) with a note; returns false when the layout can't be used at all.
+local function near(m1, m2)
+  for _, a in m1:gmatch('(%d+):(%d+)') do
+    for _, b in m2:gmatch('(%d+):(%d+)') do
+      local d = tonumber(b) - tonumber(a)
+      if d > 0 and d < 0x80 then return true end
+    end
+  end
+  return false
+end
+local function plausible(found, at, notes)
+  if found.hud_a + found.hud_b > 0x1000000 or found.open < found.hud_c or found.rowbase > 0x1000 then return false end
+  local st = found.rowstride
+  if st ~= -1 and (st < 0x100 or st > 0x10000 or not near(at.rowbase, at.rowstride)) then
+    found.rowstride, at.rowstride = -1, ''
+    notes[#notes + 1] = string.format('rowstride %x not plausible%s', st, OPTIONAL.rowstride)
+  end
+  local id = found.rowid_r
+  if id ~= -1 and (id < 8 or id + 4 > (found.rowstride ~= -1 and found.rowstride or KNOWN.rowstride)) then
+    found.rowid_r, at.rowid_r = -1, ''
+    notes[#notes + 1] = string.format('rowid_r %x not plausible%s', id, OPTIONAL.rowid_r)
+  end
+  return true
 end
 
 local L
@@ -232,45 +298,48 @@ local function resolve()
   local G = module_info(gmod)
   assert(G.code, 'no code section')
   local key = string.format('%08x-%08x-%08x', G.stamp, G.image, G.code.size)
-  local found, how
+  local found, at, how
   local c = cache_load()
   if c and c.key == key then
-    found, how = {}, 'cached for this game build'
-    for _, k in ipairs(P_ORDER) do
-      if type(c[k]) ~= 'number' then found = nil; break end
-      found[k] = c[k]
+    found, at = cache_check(G, c)
+    local notes = {}
+    if found and plausible(found, at, notes) and #notes == 0 then
+      how = 'cached for this game build (checked)'
+    else
+      found, how = nil, ' (the cache was out of date: scanned again)'
     end
   end
   if not found then
     local text = code_text(G)
     local why, moved = {}, {}
-    found = {}
+    found, at = {}, {}
     for _, name in ipairs(P_ORDER) do
-      local val, disagree = nil, false
-      for _, p in ipairs(P[name]) do
+      local val, disagree, where = nil, false, {}
+      for pi, p in ipairs(P[name]) do
         for _, o in ipairs(find_all(text, p.p)) do
-          local v = p.rip and (G.code.rva + o + p.at + 4 + si32(text, o + p.at)) or su32(text, o + p.at)
-          if val and val ~= v then disagree = true end
+          local v = value_at(text, o, p, G.code.rva)
+          if v == nil or (val and val ~= v) then disagree = true end
           val = val or v
+          where[#where + 1] = pi .. ':' .. o
         end
       end
       if OPTIONAL[name] and (not val or disagree) then
-        moved[#moved + 1] = name .. (val and ' disagrees (name fix off)' or ' not found (name fix off)')
+        found[name], at[name] = -1, ''
+        moved[#moved + 1] = name .. (disagree and ' disagrees' or ' not found') .. OPTIONAL[name]
       elseif not val then why[#why + 1] = name .. ' not found'
       elseif disagree then why[#why + 1] = name .. ': its places disagree'
       else
-        found[name] = val
+        found[name], at[name] = val, table.concat(where, ',')
         if KNOWN[name] ~= val then moved[#moved + 1] = string.format('%s %x -> %x', name, KNOWN[name], val) end
       end
     end
     text = nil
     collectgarbage()
     if #why > 0 then error(table.concat(why, '; '), 0) end
-    -- plausibility: the offsets inside the HUD are small, the open flag sits after the list
-    if found.hud_a + found.hud_b > 0x1000000 or found.open < found.hud_c or found.rowbase > 0x1000 then error('layout not plausible', 0) end
-    cache_save(key, found)
-    how = #moved == 0 and 'found in the game code (same as the September 2026 build)'
-      or ('found in the game code (new game build; moved: ' .. table.concat(moved, ', ') .. ')')
+    if not plausible(found, at, moved) then error('layout not plausible', 0) end
+    cache_save(key, found, at)
+    how = 'found in the game code (' .. (key == KNOWN_BUILD and 'the September 2026 game build' or 'a new game build')
+      .. (#moved == 0 and '; all as known)' or ('; moved: ' .. table.concat(moved, ', ') .. ')')) .. (how or '')
   end
   local A = {}
   for k, v in pairs(found) do if v ~= -1 then A[k] = v end end
@@ -392,7 +461,9 @@ end
 -- A widget: local position +4/+8, size +0xC/+0x10, scale +0x14/+0x18, anchor in its parent +0x2C/+0x30, opacity
 -- +0x44, its own pivot +0x3C/+0x40, parent +0xF0. y goes up; the root's scale turns its units into screen pixels.
 -- ======================================================================================================
-local ROWS, ROW_STRIDE = 16, 0x3760
+-- ((1.0.1 review) the stride and the id's place come from the game code at start-up (resolve); the known ones are the
+-- fallback. Without a stride from the code, a row only counts when it is the only one with the SEAF id.)
+local ROWS, ROW_STRIDE, ID_AT, ROW_ONE = 16, KNOWN.rowstride, KNOWN.rowid_r, true
 local W_SPAN = 0x48
 local OPACITY = 0x44
 local W_KEYS = { 'x', 'y', 'w', 'h', 'sx', 'sy', 'ax', 'ay', 'qx', 'qy' }
@@ -643,7 +714,20 @@ local function overlay_world()
   end
   return target, live
 end
--- the mission is over (no HUD): our GUIs are only destroyed if their world still exists, otherwise just forgotten
+-- ((1.0.1 review) the overlay world is checked on every frame that calls a GUI function (a redraw or a clear), not only
+-- once a second: a mission load can destroy it in between. GUIs whose world is gone are forgotten, never touched.)
+-- The world is checked (and taken when there is none yet); false: no overlay world now.
+local function gui_ready()
+  gui.checked = stats.frames
+  local target, live = overlay_world()
+  if gui.world and not live then gui.world, gui.list, view.sig = nil, {}, nil end
+  if not gui.world then
+    if not target then gui.state = 'no overlay world'; return false end
+    gui.world, gui.state, view.sig = target, 'screen GUIs in the overlay world', nil
+  end
+  return true
+end
+-- our GUIs emptied (the list closed, nothing to show, the mission is over): only if their world still exists
 local function release_gui()
   if A and gui.world and next(gui.list) then
     local _, live = overlay_world()
@@ -653,14 +737,14 @@ local function release_gui()
 end
 
 -- ======================================================================================================
--- Every frame. List closed: one 1-byte read. List open: the SEAF row and the list (two reads), the shells four
--- times a second; drawing only when something moved or changed.
+-- Every frame. List closed: two reads (the HUD manager pointer and the list's open flag). List open: also the SEAF row
+-- and the list (two reads), the shells four times a second; drawing only when something moved or changed.
 -- ======================================================================================================
 local ready = not V19
 local broken, last_error = false, nil
-local hud, next_second, open_was = nil, 0, false
-local row = { at = nil, chain = nil, looked = -1, checked = 0 }
-local ID_AT = 0x374c          -- a row's stratagem id (its slot is just before it, +0x3748)
+local hud, open_was = nil, false
+local row = { at = nil, chain = nil, looked = -1, checked = 0, hud = nil }
+local scanned_now = false     -- this frame ran the start-up scan (left out of the per-frame cost)
 local floor = math.floor
 -- another mod hiding the game's list (HD2 HUD+'s stratagem panel sets the list's group to opacity 0, a few frames after
 -- the list opens): once seen (or when HD2 HUD+ is installed), each opening starts hidden and the icons only show once
@@ -670,10 +754,20 @@ local cover = { known = nil, since = nil, fast_until = 0 }
 local next_queue = 0
 local stats_open = 0
 
-local function find_seaf_row(first)
+local function find_seaf_row(first)   -- a row's stratagem id at ID_AT (its slot just before it)
+  local found, n = nil, 0
   for i = 0, ROWS - 1 do
     local at = first + i * ROW_STRIDE
-    if fetch(at + ID_AT, 4) and b32(0) == SEAF_STRATAGEM then return at, i end
+    if fetch(at + ID_AT, 4) and b32(0) == SEAF_STRATAGEM then
+      if not ROW_ONE then return at, i end
+      n = n + 1
+      found = found or i
+    end
+  end
+  if n == 1 then return first + found * ROW_STRIDE, found end
+  if n > 1 and not row.many then
+    row.many = true
+    event(string.format('%d rows have the SEAF Artillery id (the row stride is not from the game code): none used', n))
   end
   return nil
 end
@@ -732,7 +826,8 @@ end
 local function fix_settle(now, open)    -- open: true, false (list closed) or nil (no HUD: the mission is over)
   local p = fix.pending
   if not p then return end
-  if open == nil then fix.pending, fix.kind = nil, nil; return end     -- the HUD is gone: nothing to put back
+  -- the HUD is gone or replaced (a new mission): nothing to put back, the row's memory isn't the HUD's any more
+  if open == nil or hud ~= fix.hud then fix.pending, fix.kind = nil, nil; return end
   if not fetch(p + L.rowid_r, 4) then fix.pending = nil; return end
   local v = b32(0)
   if v ~= 0 then
@@ -756,31 +851,39 @@ local function tick()
   if not menu_linked and stats.frames % 60 == 0 and stats.frames < 3600 then menu_linked = link_menu() end
   if not L then
     if not ready then SS.status = 'waiting for start-up'; return end
+    scanned_now = true
     local ok, res = pcall(resolve)
     if not ok then broken, last_error, SS.status = true, 'could not find the game addresses: ' .. tostring(res), 'off'; event(last_error); return end
     L = res
+    ROW_STRIDE, ROW_ONE = L.rowstride or KNOWN.rowstride, not L.rowstride
+    ID_AT = L.rowid_r and L.rowid_r == L.rowid_w and L.rowid_r or KNOWN.rowid_r
     event('game addresses: ' .. session.layout .. string.format(' (%.2f s)', session.scan_seconds))
   end
   -- both off in the options menu: the addresses are still found at start-up (no hitch when turned on), nothing else
   if not enabled and not fix_name then
     if fix.pending then fix_restore() end
     if open_was then
-      clear_all(); open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
+      release_gui(); open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
     end
     SS.status = 'off (options menu)'
     return
   end
-  if now >= next_second then
-    next_second = now + 1
-    hud = nil                                    -- the HUD manager pointer: looked up again once a second
+  -- ((1.0.1 review) the HUD manager pointer is read every frame (one 8-byte read; it was kept for a second): a new
+  -- mission frees the old HUD, and the name fix could write through the old pointer into freed memory. A new pointer
+  -- drops the row and the drawing found in the old HUD.)
+  local h = read_ptr(L.hud)
+  if h ~= hud then
+    if TESTER and hud and h then event('the HUD manager changed (a new mission): the row is looked for again') end
+    hud = h
+    if view.sig then release_gui(); view.sig = nil end
+    row.at, row.looked, row.told, row.hud = nil, -1, nil, nil
   end
-  hud = hud or read_ptr(L.hud)
   local parent = hud and hud + L.hud_a + L.hud_b
   local open = parent and fetch(parent + L.open, 1) and b8(0) or nil
   fix_settle(now, open and open == 1)
   if open ~= 1 then
     if open_was then
-      if open == nil then release_gui() else clear_all() end
+      release_gui()                              -- ((1.0.1 review) both ways: the world is checked first)
       open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
       icons_proven()
     end
@@ -803,13 +906,10 @@ local function tick()
   local icons_on = enabled and api_ok()
   if icons_on and (opened or now >= gui.next_check) then          -- (once a second even while there's no world)
     gui.next_check = now + 1
-    local target, live = overlay_world()
-    if gui.world and not live then gui.world, gui.list = nil, {} end
-    if not gui.world then
-      if not target then gui.state = 'no overlay world'; icons_on = false
-      else gui.world, gui.state, view.sig = target, 'screen GUIs in the overlay world', nil end
-    end
+    gui_ready()
   end
+  -- ((1.0.1 review) no overlay world: no icons on any frame until a check finds one, not just on the check frame)
+  if not gui.world then icons_on = false end
   -- the loaded shells: when the list opens and four times a second while it's open
   local changed = false
   if opened or now >= next_queue then
@@ -817,7 +917,7 @@ local function tick()
     changed = read_queue()
   end
   if #queue.kinds == 0 then
-    if view.sig then clear_all(); view.sig = nil end
+    if view.sig then release_gui(); view.sig = nil end
     fix.kind = nil                               -- a new mission starts the name fix afresh
     return
   end
@@ -837,7 +937,7 @@ local function tick()
     if at then
       local chain = chain_of(at)
       if chain and #chain >= 3 then
-        row.at, row.chain, row.checked, row.alpha, row.wr, row.wl = at, chain, now + 1, nil, {}, {}
+        row.at, row.chain, row.checked, row.alpha, row.wr, row.wl, row.hud = at, chain, now + 1, nil, {}, {}, hud
         local l, b, w, h = rect_of(chain)
         -- logged when it differs from last time (its x changes with the slide-in, so it's left out of the check)
         local key = string.format('%d,%d,%.0f,%.0f,%.0f,%.3f', i, #chain, b, w, h, chain[#chain].sx)
@@ -853,14 +953,15 @@ local function tick()
     end
   end
   if not row.at then
-    if view.sig then clear_all(); view.sig = nil end
+    if view.sig then release_gui(); view.sig = nil end
     return
   end
   -- the name fix: once each time the next shell changes (and once per mission), while the list is open
   local front = queue.kinds[1]
-  if fix_name and not fix.off and L.rowid_r and L.rowid_r == L.rowid_w and L.rowid_r == ID_AT
-     and not fix.pending and front ~= fix.kind then
-    if fetch(row.at + ID_AT - 4, 8) and b32(4) == SEAF_STRATAGEM then
+  if fix_name and not fix.off and L.rowid_r and L.rowid_r == L.rowid_w
+     and not fix.pending and front ~= fix.kind and row.hud == hud then
+    -- ((1.0.1 review) the HUD manager read again right before the write: the row must still be in the current HUD)
+    if read_ptr(L.hud) == hud and fetch(row.at + ID_AT - 4, 8) and b32(4) == SEAF_STRATAGEM then
       local slot = b32(0)
       if write_u32(row.at + ID_AT, 0) then
         fix.kind, fix.pending, fix.hud, fix.slot, fix.until_, fix.done = front, row.at, hud, slot, now + 0.5, fix.done + 1
@@ -870,7 +971,7 @@ local function tick()
     end
   end
   if not icons_on then
-    if view.sig then clear_all(); view.sig = nil end
+    if view.sig then release_gui(); view.sig = nil end
     return
   end
   -- every frame while open: the row (it slides in) and the list (its width and opacity); the opacity of the list's
@@ -899,6 +1000,9 @@ local function tick()
   local xl, xb, xw, xh, xr = floor(rl * 10 + 0.5), floor(rb * 10 + 0.5), floor(rw * 10 + 0.5), floor(rh * 10 + 0.5),
     floor(list_right * 10 + 0.5)
   if changed or not r.sig or r.l ~= xl or r.b ~= xb or r.w ~= xw or r.h ~= xh or r.r ~= xr or r.a ~= alpha then
+    -- ((1.0.1 review) the overlay world checked before drawing (unless this frame's check already did): gone means
+    -- nothing drawn until a check finds the next one)
+    if gui.checked ~= stats.frames and not gui_ready() then return end
     r.sig, r.l, r.b, r.w, r.h, r.r, r.a = true, xl, xb, xw, xh, xr, alpha
     stats.redraws = stats.redraws + 1
     draw(rl, rb, rw, rh, list_right, alpha)
@@ -928,13 +1032,13 @@ local function write_log()
   f:write('Bingus Shared Loader: ', V19 and 'v19 or newer' or 'older than v19 (needs v19 or newer; using the old start-up)', '\n')
   f:write('options menu: ', menu_state, '; shell icons ', enabled and 'on' or 'off', ', name fix ', fix_name and 'on' or 'off', '\n')
   f:write('name fix: ', fix.off or (not fix_name and 'off (options menu)') or (not L and 'waiting for the game addresses')
-    or (not (L.rowid_r and L.rowid_r == L.rowid_w and L.rowid_r == ID_AT) and 'off (the game\'s row update changed; not found)')
+    or (not (L.rowid_r and L.rowid_r == L.rowid_w) and 'off (the game\'s row update changed; not found)')
     or 'ready', string.format('; names redone %d (game writes %d)', fix.done, stats.writes), '\n')
   f:write('game addresses: ', tostring(session.layout), session.scan_seconds and string.format(' (%.2f s)', session.scan_seconds) or '', '\n')
   f:write('drawing: ', gui.state, '; ', tostring(gui.icon_state or 'icons not tried yet'),
           gui.update ~= nil and ('; bitmaps ' .. (gui.update and 'moved in place' or 'replaced')) or '', '\n')
   if T.n > 0 then
-    f:write(string.format('cost per frame: average %.4f ms (list open %.4f ms), highest %.3f ms, frames over 1 ms: %d\n',
+    f:write(string.format('cost per frame (not the start-up scan): average %.4f ms (list open %.4f ms), highest %.3f ms, frames over 1 ms: %d\n',
       T.sum / T.n, T.open_n > 0 and T.open_sum / T.open_n or 0, T.max, T.over))
   end
   f:write(string.format('frames %d (list open %d), game reads %d (%.2f per frame, failed %d), redraws %d\n', stats.frames, stats_open,
@@ -964,16 +1068,20 @@ rawset(_G, 'update', function(...)
     local ok, e = pcall(tick)
     if per_ms then
       K32.SsQueryPerformanceCounter(q)
-      local ms = tonumber(q[0] - a) / per_ms
-      T.n, T.sum = T.n + 1, T.sum + ms
-      if open_was then T.open_n, T.open_sum = T.open_n + 1, T.open_sum + ms end
-      if ms > T.max then T.max = ms end
-      if ms > 1 then T.over = T.over + 1 end
+      if scanned_now then
+        scanned_now = false                      -- ((1.0.1 review) the start-up scan has its own time in the log; its
+      else                                       -- frame no longer counts as the highest frame cost)
+        local ms = tonumber(q[0] - a) / per_ms
+        T.n, T.sum = T.n + 1, T.sum + ms
+        if open_was then T.open_n, T.open_sum = T.open_n + 1, T.open_sum + ms end
+        if ms > T.max then T.max = ms end
+        if ms > 1 then T.over = T.over + 1 end
+      end
     end
     if not ok then
       broken, last_error, SS.status = true, 'tick: ' .. tostring(e), 'off'
       event(last_error)
-      pcall(clear_all)
+      pcall(release_gui)                         -- ((1.0.1 review) the world checked first here too)
       if fix.pending then pcall(fix_restore) end     -- never leave the row's id at 0
     end
   end

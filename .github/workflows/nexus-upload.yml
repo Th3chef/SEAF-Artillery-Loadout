@@ -23,6 +23,8 @@ env:
 
 jobs:
   nexus:
+    # (1.0.1 review) a published pre-release is not uploaded
+    if: ${{ github.event_name != 'release' || !github.event.release.prerelease }}
     runs-on: ubuntu-latest
     steps:
       - name: Check the API key is set
@@ -46,6 +48,8 @@ jobs:
             echo "::error::No published release with the tag $TAG. A draft has no tag yet: publish the release (that runs this workflow by itself), or run it by hand with the tag of a release that is already published."
             exit 1
           fi
+          # (1.0.1 review) the release must be published and not a pre-release (a run by hand checks this too)
+          [ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease -q '.isDraft or .isPrerelease')" = false ] || { echo "::error::$TAG is a draft or a pre-release: not uploaded."; exit 1; }
           # tags are v1.0.0, v1.0.1, ...; the zip is SEAF-Artillery-Loadout-1.0.0.zip and the Nexus version 1.0.0
           VERSION="${TAG#v}"
           FILE="SEAF-Artillery-Loadout-${VERSION}.zip"

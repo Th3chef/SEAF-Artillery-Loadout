@@ -3,6 +3,7 @@
 python build.py <out dir>              the release (SEAF-Artillery-Loadout-<ver>.zip)
 python build.py <out dir> --tester     the release's Tester build (research details in the normal log, test GUID)
 python build.py <out dir> --test N     numbered test build N (log in Logs\\test, test GUID)
+  <out dir> is emptied first, but only when build.py made it (its marker file), never the source folder or one above it
   - 9ba626afa44a3aa3.patch_0: the addon (plain Lua, Bingus Shared Loader finds it by its first line)
   - manifest.json, icon.png; zip
 """
@@ -13,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import patch_writer
 
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 GUID_RELEASE = 'b6c4578a-d422-4328-b1a4-517cfc8df35e'
 GUID_TEST = '88435314-fc5c-4a96-865d-1e233b675e5c'      # Tester and numbered test builds
 LUA, TEXTURE = 0xa14e8dfa2cd117e2, 0xcd4238c6a0c69e32
@@ -107,14 +108,41 @@ def shell_icon(tip, band, unknown=False, size=SIZE):
     return img.resize((size, size), Image.LANCZOS)
 
 
+# ((1.0.1 review) the output folder is emptied before each build, so only a folder this script made is emptied: one
+# carrying its marker file, or (folders from 1.0.0 builds) one holding nothing but this script's output. Never this
+# folder or one above it: "build.py ." used to delete the source.)
+MARKER = '.seaf-artillery-loadout-build'
+
+
+def is_output(name):
+    return name in (MARKER, 'pkg', 'addon.built.lua', 'icons_preview.png') \
+        or (name.startswith('SEAF-Artillery-Loadout-') and name.endswith('.zip'))
+
+
+def clean_out(out):
+    real, here = os.path.realpath(out), os.path.realpath(HERE)
+    if real == here or here.startswith(real.rstrip(os.sep) + os.sep):
+        sys.exit('build.py: refusing to use %s as the output folder: it holds the source. Give a new folder, e.g. "out".' % out)
+    if not os.path.lexists(out):
+        return
+    if not os.path.isdir(out) or os.path.islink(out):
+        sys.exit('build.py: %s is not a folder; give a new folder for the output.' % out)
+    names = os.listdir(out)
+    if MARKER not in names and not all(is_output(n) for n in names):
+        sys.exit('build.py: refusing to empty %s: it is not a build output folder (no %s, and it holds other files). '
+                 'Give a new or empty folder.' % (out, MARKER))
+    shutil.rmtree(out)
+
+
 def main():
     out, args = sys.argv[1], sys.argv[2:]
     tester = '--tester' in args
     test = int(args[args.index('--test') + 1]) if '--test' in args else None
     full = VERSION + (' Test %d' % test if test else ' (tester)' if tester else '')
     guid = GUID_TEST if (test or tester) else GUID_RELEASE
-    if os.path.isdir(out): shutil.rmtree(out)
+    clean_out(out)
     pkg = os.path.join(out, 'pkg'); os.makedirs(pkg)
+    open(os.path.join(out, MARKER), 'w').write('SEAF Artillery Loadout build output (build.py empties this folder on the next build)\n')
     src = open(os.path.join(HERE, 'lua', 'seaf_artillery_loadout.lua'), encoding='utf-8').read()
     for a, b in ((src[src.index("local VERSION = '"):src.index("'", src.index("local VERSION = '") + 17) + 1], "local VERSION = '%s'" % full),
                  ('local TEST_BUILD = false', 'local TEST_BUILD = %s' % ('true' if test else 'false')),

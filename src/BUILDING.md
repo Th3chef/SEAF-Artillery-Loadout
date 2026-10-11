@@ -8,6 +8,9 @@ A Bingus Shared Loader Lua mod: one addon, `lua/seaf_artillery_loadout.lua`, and
     build.py        builds the mod zip (Python 3 + Pillow):
                       python3 build.py out              -> out/SEAF-Artillery-Loadout-<ver>.zip (the release)
                       python3 build.py out --tester     -> the Tester build (extra details in the log)
+                      python3 build.py out --test N     -> numbered test build N (log in Logs\test, test GUID)
+                    The output folder is emptied first, but only a folder build.py made (it carries the marker
+                    file .seaf-artillery-loadout-build), never this folder or one above it.
                     It also draws the shell icons (64x64 textures, one per shell type) and writes
                     out/icons_preview.png.
     patch_writer.py writes the patch archive

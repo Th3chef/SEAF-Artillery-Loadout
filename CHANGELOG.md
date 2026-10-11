@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+- The name fix checks the HUD every frame, so a new mission can never leave it writing to the previous mission's HUD.
+- The icons check the game's overlay before every redraw and when the list closes (a mission load can remove it at any moment), and stay off without retrying every frame while there is none.
+- The row size and the row's stratagem id place are read from the game's code instead of being fixed numbers (patch-proof).
+- The cached game addresses are checked against the game's code at every start.
+- The log's per-frame cost no longer counts the start-up scan.
+
 ## 1.0.0
 
 First release.

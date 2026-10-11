@@ -63,7 +63,7 @@ A Bingus Shared Loader Lua addon. It reads game memory; its only write is the na
 - It finds the SEAF Artillery row in the game's stratagem list and places the icons just right of the list, using the list's own position, size and fade.
 - The icons are drawn with the game's own UI drawing, and only redrawn when something changes.
 - The name fix: the game's stratagem list keeps the stratagem id of each row and only redoes a row's name when that id changes. When the next shell changes, the mod clears the SEAF Artillery row's kept id once; on its next update the game sees a "new" stratagem and redoes the name itself, with its own code, which names the shell that really fires next. The game puts the id back in that same update. It's your HUD only: nothing is sent to other players. If a game update changes how this works, the fix turns itself off (and says so in its log) while the icons keep working.
-- The game's addresses are found by searching the game's code at start-up and cached per game build.
+- The game's addresses are found by searching the game's code at start-up and cached per game build; the cached places are checked against the game's code at every start.
 
 ## Troubleshooting
 
