@@ -14,11 +14,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import patch_writer
 
-VERSION = '1.0.1'
+VERSION = '1.1.0'
 GUID_RELEASE = 'b6c4578a-d422-4328-b1a4-517cfc8df35e'
 GUID_TEST = '88435314-fc5c-4a96-865d-1e233b675e5c'      # Tester and numbered test builds
 LUA, TEXTURE = 0xa14e8dfa2cd117e2, 0xcd4238c6a0c69e32
 ADDON = 'mods/chef/seaf_artillery_loadout'
+HUDPLUS_PART = 'mods/chef/seaf_artillery_loadout_hudplus'   # (1.1.0) the HD2 HUD+ add-on
 ANTON = os.path.join(HERE, 'fonts', 'anton-latin-400-normal.ttf')
 
 
@@ -46,7 +47,7 @@ SIZE = 64          # icon texture side
 # High-Yield orange, Mini Nuke black with a yellow band), brightened a little to read on the HUD
 SHELLS = [
     ('explosive', (150, 162, 72), None),
-    ('high_yield', (244, 132, 40), None),
+    ('high_yield', (252, 180, 24), None),      # (1.1.0) amber yellow like the game's shell (was orange 244,132,40)
     ('mini_nuke', (34, 34, 34), (255, 214, 40)),
     ('napalm', (226, 64, 40), None),
     ('smoke', (196, 196, 196), None),
@@ -115,7 +116,7 @@ MARKER = '.seaf-artillery-loadout-build'
 
 
 def is_output(name):
-    return name in (MARKER, 'pkg', 'addon.built.lua', 'icons_preview.png') \
+    return name in (MARKER, 'pkg', 'addon.built.lua', 'hudplus.built.lua', 'icons_preview.png') \
         or (name.startswith('SEAF-Artillery-Loadout-') and name.endswith('.zip'))
 
 
@@ -138,7 +139,9 @@ def main():
     out, args = sys.argv[1], sys.argv[2:]
     tester = '--tester' in args
     test = int(args[args.index('--test') + 1]) if '--test' in args else None
-    full = VERSION + (' Test %d' % test if test else ' (tester)' if tester else '')
+    spoof = '--spoof' in args                 # a numbered test build with made-up shells (no SEAF Artillery needed)
+    assert not spoof or test, '--spoof needs --test N'
+    full = VERSION + (' Test %d' % test if test else ' (tester)' if tester else '') + (' Spoof' if spoof else '')
     guid = GUID_TEST if (test or tester) else GUID_RELEASE
     clean_out(out)
     pkg = os.path.join(out, 'pkg'); os.makedirs(pkg)
@@ -146,7 +149,8 @@ def main():
     src = open(os.path.join(HERE, 'lua', 'seaf_artillery_loadout.lua'), encoding='utf-8').read()
     for a, b in ((src[src.index("local VERSION = '"):src.index("'", src.index("local VERSION = '") + 17) + 1], "local VERSION = '%s'" % full),
                  ('local TEST_BUILD = false', 'local TEST_BUILD = %s' % ('true' if test else 'false')),
-                 ('local TESTER = false', 'local TESTER = %s' % ('true' if (tester or test) else 'false'))):
+                 ('local TESTER = false', 'local TESTER = %s' % ('true' if (tester or test) else 'false')),
+                 ('local SPOOF = false', 'local SPOOF = %s' % ('true' if spoof else 'false'))):
         assert src.count(a) == 1, a
         src = src.replace(a, b)
     icons_lua, textures = [], []
@@ -158,12 +162,26 @@ def main():
         icons_lua.append("KIND.%s.texture, KIND.%s.rgb = '%016x', { %d, %d, %d }" % (kid, kid, tex_id, *tip))
         sheet.alpha_composite(img.resize((SIZE * 2, SIZE * 2), Image.LANCZOS), (i * SIZE * 2, 0))
     sheet.save(os.path.join(out, 'icons_preview.png'))
+    # (1.1.0) the next shell's bar on HD2 HUD+'s panel: a small solid yellow texture (the game's HUD yellow)
+    bar_id = resource_hash('mods/chef/seaf_artillery_loadout/next_bar')
+    bar = Image.new('RGBA', (8, 8), (255, 231, 16, 255))
+    textures.append((bar_id, TEXTURE, texture_resource(8), bar.tobytes(), b'', 64))
+    icons_lua.append("BAR_TEXTURE = '%016x'" % bar_id)
     assert src.count('--@@ICONS@@') == 1
     src = src.replace('--@@ICONS@@', '\n'.join(icons_lua))
     for bad in ('/home/', '/mnt/', 'D:\\', 'C:\\', 'Users\\'):
         assert bad not in src, 'not sanitized: ' + bad
     open(os.path.join(out, 'addon.built.lua'), 'w', encoding='utf-8').write(src)
-    toc, gpu, stream = patch_writer.write([(resource_hash(ADDON), LUA, lua_resource(src), b'', b'', 64)] + textures,
+    # (1.1.0) the HD2 HUD+ add-on: its own Lua resource, found by HUD+ through its first line (Bingus skips it)
+    part = open(os.path.join(HERE, 'lua', 'seaf_artillery_loadout_hudplus.lua'), encoding='utf-8').read()
+    a = "local VERSION = '%s'" % VERSION
+    assert part.count(a) == 1 and part.startswith('local HD2_HUD_ADDON = "%s"\n' % HUDPLUS_PART), 'HUD+ add-on header'
+    part = part.replace(a, "local VERSION = '%s'" % full)
+    for bad in ('/home/', '/mnt/', 'D:\\', 'C:\\', 'Users\\'):
+        assert bad not in part, 'not sanitized: ' + bad
+    open(os.path.join(out, 'hudplus.built.lua'), 'w', encoding='utf-8').write(part)
+    toc, gpu, stream = patch_writer.write([(resource_hash(ADDON), LUA, lua_resource(src), b'', b'', 64),
+                                           (resource_hash(HUDPLUS_PART), LUA, lua_resource(part), b'', b'', 64)] + textures,
                                           [(LUA, 64), (TEXTURE, 64)])
     patch_writer.check(toc, gpu, stream)
     base = os.path.join(pkg, '9ba626afa44a3aa3.patch_0')
@@ -181,11 +199,13 @@ def main():
         shutil.copyfile(art_icon, os.path.join(pkg, 'icon.png'))
     desc = ('Shows what the SEAF artillery has loaded: once the SEAF Artillery objective is done, the shells still loaded '
             'appear as icons in firing order next to the SEAF Artillery stratagem while the stratagem list is open, the '
-            'next one marked; also has the game redo its SEAF Artillery shell name when the next shell changes (the game\'s own '
-            'name can lag after a shot). Requires Bingus Shared Loader v19 or newer.')
+            'next one marked, on the game\'s list or on HD2 HUD+\'s stratagem panel; also has the game redo its SEAF Artillery '
+            'shell name when the next shell changes (the game\'s own name can lag after a shot). Requires Bingus Shared Loader '
+            'v19 or newer.')
     man = {'Version': 1, 'Guid': guid, 'Name': 'SEAF Artillery Loadout ' + full, 'Description': desc, 'IconPath': 'icon.png'}
     open(os.path.join(pkg, 'manifest.json'), 'w').write(json.dumps(man, indent=2))
-    z = os.path.join(out, 'SEAF-Artillery-Loadout-%s.zip' % (VERSION + ('-Test-%d' % test if test else '-Tester' if tester else '')))
+    z = os.path.join(out, 'SEAF-Artillery-Loadout-%s.zip' % (VERSION + ('-Test-%d' % test if test else '-Tester' if tester else '')
+                                                             + ('-Spoof' if spoof else '')))
     with zipfile.ZipFile(z, 'w', zipfile.ZIP_DEFLATED) as zf:       # fixed dates: the same source gives the same zip
         for f in sorted(os.listdir(pkg)):
             info = zipfile.ZipInfo(f, date_time=(2026, 10, 10, 0, 0, 0))
