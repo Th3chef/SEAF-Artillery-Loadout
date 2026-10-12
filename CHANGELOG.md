@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.0
+
+- **Works with HD2 HUD+:** the shells now show on HD2 HUD+'s own stratagem panel, next to its SEAF Artillery row (a small HUD+ add-on built into the mod, for HD2 HUD+ 0.2.2).
+- The High-Yield Explosive icon is now yellow, like the shell in game (it was orange).
+- New art.
+
 ## 1.0.1
 
 - The name fix checks the HUD every frame, so a new mission can never leave it writing to the previous mission's HUD.
