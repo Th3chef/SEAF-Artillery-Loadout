@@ -24,7 +24,7 @@ FONTS = {'Anton': 'fonts/anton-latin-400-normal.woff2',
          'Barlow Condensed B': 'fonts/barlow-condensed-latin-800-normal.woff2'}
 
 TAGLINE = 'Know what the guns have loaded'
-FEATURES = ['EVERY SHELL TYPE', 'FIRING ORDER', 'NEXT SHELL MARKED']
+FEATURES = ['EVERY SHELL TYPE', 'FIRING ORDER', 'NEXT SHELL MARKED', 'HD2 HUD+ READY']   # (1.1: + the HD2 HUD+ add-on)
 # the loaded shells shown, next first (the game names the next one in the row: "SEAF ARTILLERY: EXPLOSIVE")
 LOADED = ['explosive', 'high_yield', 'napalm', 'static_field', 'mini_nuke']      # the artillery holds 5 shells
 ICON_H, STEP, GAP = 0.86, 0.46, 0.18      # the mod's own layout (lua: icon height and spacing, gap after the list)
@@ -117,8 +117,6 @@ body { width:%(W)dpx; height:%(H)dpx; overflow:hidden; background:#000; position
 .feat { font-family:'Barlow Condensed B'; color:#111; display:flex; flex-wrap:wrap; gap:0.35em; }
 .feat span { background:rgba(255,231,16,.95); padding:0.06em 0.4em 0.02em; border:0.05em solid #111; letter-spacing:0.04em;
   box-shadow:0 0.06em 0.2em rgba(0,0,0,.55); }
-.stripe { position:absolute; left:0; right:0; background:repeating-linear-gradient(-45deg,#ffe710 0 22px,#111 22px 44px);
-  box-shadow:0 0 12px rgba(0,0,0,.7); }
 .band { display:inline-block; padding:0.3em 0.68em 0.26em; background:linear-gradient(rgba(8,10,14,.6),rgba(8,10,14,.48));
   border-top:0.08em solid #ffe710; border-bottom:0.08em solid #ffe710; box-shadow:0 6px 24px rgba(0,0,0,.55);
   font-family:'Barlow Condensed B'; letter-spacing:0.12em; text-transform:uppercase; color:#eadfc8; text-shadow:0 2px 3px #000;
@@ -160,7 +158,6 @@ def main():
     W = H = 1254
     bg = hero.hero(W, H, 760, 1010, 420, seed=7)
     jobs.append(('thumbnail.png', W, H, bg, """
-      <div class="stripe" style="top:0;height:26px"></div><div class="stripe" style="bottom:0;height:26px"></div>
       <div style="position:absolute;left:0;right:0;top:66px;text-align:center">
         <div class="title" style="font-size:148px;white-space:nowrap">SEAF Artillery</div>
         <div style="display:flex;justify-content:center;align-items:flex-start;gap:26px;margin-top:6px">
@@ -175,7 +172,6 @@ def main():
     W, H = 1920, 1080
     bg = hero.hero(W, H, 1440, 900, 470, seed=11)
     jobs.append(('gallery_1920x1080.png', W, H, bg, """
-      <div class="stripe" style="top:0;height:24px"></div><div class="stripe" style="bottom:0;height:24px"></div>
       <div class="plate" style="left:70px;top:84px;width:1080px;padding:36px 40px 38px">
         <div style="display:flex;align-items:flex-start;gap:24px"><div class="title" style="font-size:104px;white-space:nowrap">SEAF Artillery Loadout</div></div>
         <div style="margin-top:22px;display:flex;align-items:center;gap:26px"><span class="badge" style="font-size:44px">v%(v)s</span>
@@ -198,7 +194,6 @@ def main():
     W, H = 1300, 372
     bg = hero.hero(W, H, 1140, 330, 190, seed=9)
     jobs.append(('header_1300x372.png', W, H, bg, """
-      <div class="stripe" style="top:0;height:14px"></div><div class="stripe" style="bottom:0;height:14px"></div>
       <div style="position:absolute;left:44px;top:40px;display:flex;align-items:flex-start;gap:20px">
         <div class="title" style="font-size:80px;white-space:nowrap">SEAF Artillery Loadout</div>
         <span class="badge" style="font-size:32px;margin-top:6px">v%(v)s</span></div>
@@ -207,7 +202,6 @@ def main():
     W, H = 1600, 1000
     bg = hero.hero(W, H, 1180, 900, 380, seed=13)
     jobs.append(('AyakaMods-Cover-1600x1000.png', W, H, bg, """
-      <div class="stripe" style="top:0;height:24px"></div><div class="stripe" style="bottom:0;height:24px"></div>
       <div style="position:absolute;left:0;right:0;top:170px;display:flex;justify-content:center;align-items:flex-start;gap:22px">
         <div class="title" style="font-size:104px;white-space:nowrap">SEAF Artillery Loadout</div>
         <span class="badge" style="font-size:40px;margin-top:8px">v%(v)s</span></div>
