@@ -6,9 +6,10 @@
 -- that name when the row gets a new stratagem, so after a shot it can keep naming a shell that was already fired.
 -- That is its only write to game memory (one value in the HUD's own row, which the game sets back on its next
 -- update); everything else is read only. It finds the game's addresses again by itself after a game update.
-local VERSION = '1.0.1'
+local VERSION = '1.1.0'
 local TEST_BUILD = false      -- numbered test builds: the log goes to Logs\test
 local TESTER = false          -- the release's Tester build: more detail in the log
+local SPOOF = false           -- spoof test builds: made-up shells on the list's first row (no SEAF Artillery needed)
 
 if rawget(_G, 'ChefSeafArtilleryLoadout') then return end
 local SS = { version = VERSION, status = 'starting' }
@@ -366,10 +367,26 @@ local KIND = {}
 for _, k in ipairs(KINDS) do KIND[k.id] = k end
 local KIND_BY_TEXT = {}
 for _, k in ipairs(KINDS) do for _, id in ipairs(k.ids) do KIND_BY_TEXT[id] = k end end
+local BAR_TEXTURE             -- (1.1.0) the next shell's yellow bar on HD2 HUD+'s panel (set by the build)
 --@@ICONS@@
 SS.textures = {}
 for _, k in ipairs(KINDS) do SS.textures[k.id] = k.texture end
+
+-- (1.1.0) HD2 HUD+: this mod's second Lua resource is an HD2 HUD+ add-on that draws the shells on HUD+'s own stratagem
+-- panel. It takes what this addon has already read from here, the same frame HUD+ draws: the shells (kind ids, next
+-- first), whether the icons are on, the game list's SEAF row index and the row layout found in the game code.
+local HP = { on = false, kinds = {}, textures = SS.textures, bar = BAR_TEXTURE, layout = nil, index = nil, opening = 0,
+  row_id = 28 }
+SS.hudplus = HP
+local hp = { state = nil, detail = nil }
+SS.hudplus_note = function(state, detail)        -- the add-on's state, for the log
+  if state == hp.state and detail == hp.detail then return end
+  hp.state, hp.detail = state, detail
+  event('HD2 HUD+ add-on: ' .. tostring(state) .. (detail ~= nil and (' (' .. tostring(detail) .. ')') or ''))
+end
+local hp_none = {}
 local SEAF_STRATAGEM = 28
+local ROW_ID = SEAF_STRATAGEM   -- the stratagem id of the row the icons go on (spoof builds: the list's first row)
 
 local kind_of = {}            -- [projectile type] = kind (each looked up once)
 local function kind_for(v)
@@ -399,7 +416,31 @@ end
 -- ======================================================================================================
 local queue = { kinds = {}, sig = '', text = 'none', fails = 0 }   -- sig nil: read again next time
 local function by_ready(a, b) if a.ready ~= b.ready then return a.ready < b.ready end return a.i < b.i end
+local function hp_sync(kinds)                    -- (1.1.0) the add-on's shell list: kind ids, next first
+  local k = HP.kinds
+  for i = 1, math.max(#k, #kinds) do local q = kinds[i]; k[i] = q and q.id or nil end
+end
+
+-- spoof builds: 5 shells (the most the artillery holds) from a cycle of every shell type, moving on by one each time
+-- the list opens (the next one fired, a new type loaded at the back): over 6 openings each type is next once
+local SPOOF_LOAD = { 'high_yield', 'mini_nuke', 'napalm', 'static_field', 'smoke', 'explosive' }
+local SPOOF_HELD = 5
+local function spoof_queue()
+  local n, shift = #SPOOF_LOAD, math.max(0, HP.opening - 1)
+  local kinds, names, same = {}, {}, true
+  for i = 1, SPOOF_HELD do
+    kinds[i] = KIND[SPOOF_LOAD[(i - 1 + shift) % n + 1]]
+    names[i] = kinds[i].name
+    if kinds[i] ~= queue.kinds[i] then same = false end
+  end
+  if same and #queue.kinds == SPOOF_HELD then return false end
+  queue.kinds = kinds
+  event('SPOOF loaded shells (next first): ' .. table.concat(names, ', '))
+  return true
+end
+
 local function read_queue()
+  if SPOOF then return spoof_queue() end
   local rm = read_ptr(L.rack)
   if not rm or not fetch(rm, 0x58) then
     -- the racks can't be read (twice in a row): nothing is shown rather than an old list
@@ -755,6 +796,16 @@ local next_queue = 0
 local stats_open = 0
 
 local function find_seaf_row(first)   -- a row's stratagem id at ID_AT (its slot just before it)
+  if SPOOF then                         -- the first row with a stratagem in it
+    for i = 0, ROWS - 1 do
+      local at = first + i * ROW_STRIDE
+      if fetch(at + ID_AT, 4) and b32(0) > 0 and b32(0) < 0x10000 then
+        ROW_ID = b32(0); HP.row_id = ROW_ID
+        return at, i
+      end
+    end
+    return nil
+  end
   local found, n = nil, 0
   for i = 0, ROWS - 1 do
     local at = first + i * ROW_STRIDE
@@ -857,10 +908,13 @@ local function tick()
     L = res
     ROW_STRIDE, ROW_ONE = L.rowstride or KNOWN.rowstride, not L.rowstride
     ID_AT = L.rowid_r and L.rowid_r == L.rowid_w and L.rowid_r or KNOWN.rowid_r
+    HP.layout = { rowbase = L.rowbase, stride = ROW_STRIDE, id = ID_AT }
     event('game addresses: ' .. session.layout .. string.format(' (%.2f s)', session.scan_seconds))
   end
   -- both off in the options menu: the addresses are still found at start-up (no hitch when turned on), nothing else
+  HP.on = enabled
   if not enabled and not fix_name then
+    if #HP.kinds > 0 then hp_sync(hp_none) end
     if fix.pending then fix_restore() end
     if open_was then
       release_gui(); open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
@@ -882,6 +936,8 @@ local function tick()
   local open = parent and fetch(parent + L.open, 1) and b8(0) or nil
   fix_settle(now, open and open == 1)
   if open ~= 1 then
+    if #HP.kinds > 0 then hp_sync(hp_none) end
+    HP.index = nil
     if open_was then
       release_gui()                              -- ((1.0.1 review) both ways: the world is checked first)
       open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
@@ -895,10 +951,12 @@ local function tick()
   local opened = not open_was
   open_was = true
   if opened then
+    HP.opening = HP.opening + 1
     cover.fast_until, cover.since, row.alpha = now + 0.6, nil, nil
     if cover.known == nil then
       local ok, found = pcall(function() return SR.Application.can_get('lua', HUDPLUS) end)
       cover.known = ok and found == true
+      cover.hudplus = cover.known
       if cover.known then event('HD2 HUD+ is installed: the icons wait until the game\'s list is really showing') end
     end
   end
@@ -915,6 +973,7 @@ local function tick()
   if opened or now >= next_queue then
     next_queue = now + 0.25
     changed = read_queue()
+    hp_sync(queue.kinds)
   end
   if #queue.kinds == 0 then
     if view.sig then release_gui(); view.sig = nil end
@@ -924,7 +983,7 @@ local function tick()
   -- the row still shows SEAF Artillery (checked when the shells change and once a second)
   if row.at and fix.pending ~= row.at and (changed or now >= row.checked) then
     row.checked = now + 1
-    if not fetch(row.at + ID_AT, 4) or b32(0) ~= SEAF_STRATAGEM then
+    if not fetch(row.at + ID_AT, 4) or b32(0) ~= ROW_ID then
       event('the SEAF Artillery row moved; looking again')
       row.at, row.looked = nil, -1
     end
@@ -938,6 +997,7 @@ local function tick()
       local chain = chain_of(at)
       if chain and #chain >= 3 then
         row.at, row.chain, row.checked, row.alpha, row.wr, row.wl, row.hud = at, chain, now + 1, nil, {}, {}, hud
+        HP.index = i
         local l, b, w, h = rect_of(chain)
         -- logged when it differs from last time (its x changes with the slide-in, so it's left out of the check)
         local key = string.format('%d,%d,%.0f,%.0f,%.0f,%.3f', i, #chain, b, w, h, chain[#chain].sx)
@@ -958,7 +1018,7 @@ local function tick()
   end
   -- the name fix: once each time the next shell changes (and once per mission), while the list is open
   local front = queue.kinds[1]
-  if fix_name and not fix.off and L.rowid_r and L.rowid_r == L.rowid_w
+  if fix_name and not SPOOF and not fix.off and L.rowid_r and L.rowid_r == L.rowid_w
      and not fix.pending and front ~= fix.kind and row.hud == hud then
     -- ((1.0.1 review) the HUD manager read again right before the write: the row must still be in the current HUD)
     if read_ptr(L.hud) == hud and fetch(row.at + ID_AT - 4, 8) and b32(4) == SEAF_STRATAGEM then
@@ -1034,6 +1094,10 @@ local function write_log()
   f:write('name fix: ', fix.off or (not fix_name and 'off (options menu)') or (not L and 'waiting for the game addresses')
     or (not (L.rowid_r and L.rowid_r == L.rowid_w) and 'off (the game\'s row update changed; not found)')
     or 'ready', string.format('; names redone %d (game writes %d)', fix.done, stats.writes), '\n')
+  f:write('HD2 HUD+ add-on: ', hp.state and (hp.state .. (hp.detail ~= nil and (' (' .. tostring(hp.detail) .. ')') or '')
+      .. ((HP.moves or 0) > 0 and string.format('; HUD+ rebuilt its panel elsewhere %d times, found again each time', HP.moves) or ''))
+    or (cover.hudplus and 'not run yet (it runs while HUD+\'s stratagem list is open; if it never does, HD2 HUD+ refused it: another HUD+ version?)')
+    or 'HD2 HUD+ not seen', '\n')
   f:write('game addresses: ', tostring(session.layout), session.scan_seconds and string.format(' (%.2f s)', session.scan_seconds) or '', '\n')
   f:write('drawing: ', gui.state, '; ', tostring(gui.icon_state or 'icons not tried yet'),
           gui.update ~= nil and ('; bitmaps ' .. (gui.update and 'moved in place' or 'replaced')) or '', '\n')
@@ -1080,6 +1144,7 @@ rawset(_G, 'update', function(...)
     end
     if not ok then
       broken, last_error, SS.status = true, 'tick: ' .. tostring(e), 'off'
+      HP.on = false; pcall(hp_sync, hp_none)      -- ((1.1.0 review) HD2 HUD+'s panel never keeps an old list)
       event(last_error)
       pcall(release_gui)                         -- ((1.0.1 review) the world checked first here too)
       if fix.pending then pcall(fix_restore) end     -- never leave the row's id at 0
@@ -1109,4 +1174,5 @@ else
   event('Bingus Shared Loader older than v19: needs v19 or newer (starting without waiting for start-up)')
 end
 event('loaded')
+if SPOOF then event('SPOOF test build: made-up shells (every type) on the stratagem list\'s first row; the name fix is off') end
 pcall(write_log)
