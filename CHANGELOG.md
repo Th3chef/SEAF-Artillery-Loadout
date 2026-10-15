@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- **Works with HD2 HUD+ 0.2.4:** the shells show on its stratagem panel again (with 1.1.0 they didn't on 0.2.4).
+- **Ready for future HD2 HUD+ versions:** when HUD+ loads the add-on, it checks that HUD+ still has everything it uses, so a new HUD+ version needs no update of this mod. If a future one changes how its stratagem panel works, HUD+ skips the add-on cleanly and the log says why.
+- **Safer:** the HUD+ add-on reads memory only through this mod's own safe reader, so a bad address can never crash the game.
+
 ## 1.1.0
 
 - **Works with HD2 HUD+:** the shells now show on HD2 HUD+'s own stratagem panel, next to its SEAF Artillery row (a small HUD+ add-on built into the mod, for HD2 HUD+ 0.2.2).
