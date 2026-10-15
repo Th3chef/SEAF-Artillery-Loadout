@@ -6,7 +6,7 @@
 -- that name when the row gets a new stratagem, so after a shot it can keep naming a shell that was already fired.
 -- That is its only write to game memory (one value in the HUD's own row, which the game sets back on its next
 -- update); everything else is read only. It finds the game's addresses again by itself after a game update.
-local VERSION = '1.1.0'
+local VERSION = '1.1.1'
 local TEST_BUILD = false      -- numbered test builds: the log goes to Logs\test
 local TESTER = false          -- the release's Tester build: more detail in the log
 local SPOOF = false           -- spoof test builds: made-up shells on the list's first row (no SEAF Artillery needed)
@@ -376,7 +376,10 @@ for _, k in ipairs(KINDS) do SS.textures[k.id] = k.texture end
 -- panel. It takes what this addon has already read from here, the same frame HUD+ draws: the shells (kind ids, next
 -- first), whether the icons are on, the game list's SEAF row index and the row layout found in the game code.
 local HP = { on = false, kinds = {}, textures = SS.textures, bar = BAR_TEXTURE, layout = nil, index = nil, opening = 0,
-  row_id = 28 }
+  row_id = 28,
+  -- (1.1.1) the add-on reads memory through this addon's safe reader (a bad address fails cleanly), never through
+  -- HD2 HUD+'s own reader, which changes between HUD+ versions and from 0.2.4 on reads memory directly
+  mem = { bytes = read_string, ptr = read_ptr, u32 = function(addr) return fetch(addr, 4) and b32(0) or nil end } }
 SS.hudplus = HP
 local hp = { state = nil, detail = nil }
 SS.hudplus_note = function(state, detail)        -- the add-on's state, for the log
@@ -1094,9 +1097,11 @@ local function write_log()
   f:write('name fix: ', fix.off or (not fix_name and 'off (options menu)') or (not L and 'waiting for the game addresses')
     or (not (L.rowid_r and L.rowid_r == L.rowid_w) and 'off (the game\'s row update changed; not found)')
     or 'ready', string.format('; names redone %d (game writes %d)', fix.done, stats.writes), '\n')
+  local taken = rawget(_G, 'ChefSeafArtilleryLoadoutHudPlus')       -- (1.1.1) how HD2 HUD+ took the add-on
+  if type(taken) == 'table' and taken.how then f:write('HD2 HUD+ add-on loaded: ', tostring(taken.how), '\n') end
   f:write('HD2 HUD+ add-on: ', hp.state and (hp.state .. (hp.detail ~= nil and (' (' .. tostring(hp.detail) .. ')') or '')
       .. ((HP.moves or 0) > 0 and string.format('; HUD+ rebuilt its panel elsewhere %d times, found again each time', HP.moves) or ''))
-    or (cover.hudplus and 'not run yet (it runs while HUD+\'s stratagem list is open; if it never does, HD2 HUD+ refused it: another HUD+ version?)')
+    or (cover.hudplus and 'not run yet (it runs while HUD+\'s stratagem list is open)')
     or 'HD2 HUD+ not seen', '\n')
   f:write('game addresses: ', tostring(session.layout), session.scan_seconds and string.format(' (%.2f s)', session.scan_seconds) or '', '\n')
   f:write('drawing: ', gui.state, '; ', tostring(gui.icon_state or 'icons not tried yet'),
