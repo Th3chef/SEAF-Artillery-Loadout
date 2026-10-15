@@ -8,7 +8,9 @@ A Bingus Shared Loader Lua mod: one addon, `lua/seaf_artillery_loadout.lua`, its
                     filled in by build.py with the shell icon textures' ids and colors.
     lua/seaf_artillery_loadout_hudplus.lua
                     the HD2 HUD+ add-on (plain Lua; HD2 HUD+ finds it by its first line, Bingus skips it): it draws
-                    the shells the addon has read on HD2 HUD+'s stratagem panel. Made for HD2 HUD+ 0.2.2 (its pin).
+                    the shells the addon has read on HD2 HUD+'s stratagem panel. Tested on HD2 HUD+ 0.2.2 and 0.2.4;
+                    it reads memory through the addon's safe reader and takes the pin of the HUD+ build that loads
+                    it once that build has everything it uses, so a new HUD+ version needs no rebuild.
     build.py        builds the mod zip (Python 3 + Pillow):
                       python3 build.py out              -> out/SEAF-Artillery-Loadout-<ver>.zip (the release)
                       python3 build.py out --tester     -> the Tester build (extra details in the log)

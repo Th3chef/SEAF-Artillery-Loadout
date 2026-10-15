@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import patch_writer
 
-VERSION = '1.1.0'
+VERSION = '1.1.1'
 GUID_RELEASE = 'b6c4578a-d422-4328-b1a4-517cfc8df35e'
 GUID_TEST = '88435314-fc5c-4a96-865d-1e233b675e5c'      # Tester and numbered test builds
 LUA, TEXTURE = 0xa14e8dfa2cd117e2, 0xcd4238c6a0c69e32
