@@ -4,9 +4,11 @@
 -- order, right of the SEAF Artillery stratagem while the stratagem list is open; the next shell is marked.
 -- It also has the game redo the row's "SEAF ARTILLERY: <shell>" name when the next shell changes: the game only sets
 -- that name when the row gets a new stratagem, so after a shot it can keep naming a shell that was already fired.
--- That is its only write to game memory (one value in the HUD's own row, which the game sets back on its next
--- update); everything else is read only. It finds the game's addresses again by itself after a game update.
-local VERSION = '1.1.1'
+-- That is its only direct write to game memory (one value in the HUD's own row, which the game sets back on its next
+-- update). (2.0.0) With HD2 HUD+'s stratagem panel, the icons go on HUD+'s panel as the game's own UI widgets, made
+-- in this addon's own memory and attached with the game's own UI calls (see "HD2 HUD+'s stratagem panel" below).
+-- Everything else is read only. It finds the game's addresses and calls again by itself after a game update.
+local VERSION = '2.0.0'
 local TEST_BUILD = false      -- numbered test builds: the log goes to Logs\test
 local TESTER = false          -- the release's Tester build: more detail in the log
 local SPOOF = false           -- spoof test builds: made-up shells on the list's first row (no SEAF Artillery needed)
@@ -182,6 +184,8 @@ end
 -- Where the game keeps things: code patterns ('??' = any byte), each item read out of every place its pattern
 -- matches (all places must agree). An item is a RIP-relative address (rip) or a number in the code.
 -- ======================================================================================================
+-- (2.0.0) the game's start-up loop over its UI contexts (from the second one; its pointer to them, their size, how many)
+local UI_LOOP = '488b2d????????bb01000000488dbd????????90803f0074??8bc34869c8????????4803cde8????????ffc34881c7????????83fb??72'
 local P = {
   -- the artillery's shell racks (component manager: count +8; entities +0x38; networked state records +0x50)
   rack = { { p = '488b2d????????0f84????????448b4d2833c9448b5530', at = 3, rip = true },
@@ -203,13 +207,54 @@ local P = {
   -- overwritten with the new one (the name is only redone when they differ); both offsets must agree
   rowid_r = { { p = '418b87????????4b8d0c764c8b55??4803c98945??418b94ca????????418997????????', at = 3 } },
   rowid_w = { { p = '418b87????????4b8d0c764c8b55??4803c98945??418b94ca????????418997????????', at = 32 } },
+  -- (2.0.0) the game's UI calls and contexts, for the icons on HD2 HUD+'s stratagem panel (optional: without them that
+  -- panel gets no icons; everything else works). The UI contexts: a pointer to the array (the start-up loop over the
+  -- contexts and the context pop both read it; they must agree), the size of one context and how many there are (the
+  -- loop's own numbers), and where the context stack's top is kept (context push, twice).
+  ui_ctx = { { p = UI_LOOP, at = 3, rip = true }, { p = '488b05????????ff88????????c3', at = 3, rip = true },
+    { p = '48895c2410574883ec200f2805????????33ff4c8b05????????', at = 22, rip = true } },
+  ui_stride = { { p = UI_LOOP, at = 15, also = 30 } },
+  ui_slots = { { p = UI_LOOP, at = 53, u8 = true } },
+  ui_top = { { p = '4c6381????????418d40018981????????41889408????????c3', at = 3, also = 13 } },
+  -- the context stack (push writes the new slot there, just before the top) and each context's roots (a small set
+  -- near its end: the game's root_build puts a new root there, right after reading the root's context at +0xF8)
+  ui_stack = { { p = '4c6381????????418d40018981????????41889408????????c3', at = 21 } },
+  ui_roots = { { p = 'e8????????488b8bf8000000488bd34881c1????????e8', at = 18 } },
+  -- the calls themselves: where each function starts (here = the match is the function). The patterns keep the
+  -- widget offsets the calls rely on (first child +0xE0, next sibling +0xE8, parent +0xF0, layer +0xBC; root_build's
+  -- context +0xF8), so a game that moved them is not matched. widget_shown_set has an identical twin (same body, same calls): either is the same function.
+  ui_push = { { p = '4c6381????????418d40018981????????41889408????????c3', here = true } },
+  ui_pop = { { p = '488b05????????ff88????????c3', here = true } },
+  w_init = { { p = '48895c2410574883ec200f2805????????33ff4c8b05????????', here = true } },
+  w_pinit = { { p = '40534883ec20ba03000000488bd9e8????????', here = true } },
+  w_pset = { { p = '48895c2410574883ec30498bd8488bf9450fb6c1', here = true } },
+  w_size = { { p = '48895c241848896c24204889542410565741574883ec20f30f10410c', here = true } },
+  w_anchor = { { p = '4883ec28f30f10412c4c8bc94889542430', here = true } },
+  w_pivot = { { p = '4883ec28f30f10413c4c8bc94889542430', here = true } },
+  w_pos = { { p = '48895c241848896c24204889542410565741574883ec20f30f104104', here = true } },
+  w_layer = { { p = '4883ec284c8bc9663991bc0000007507', here = true } },
+  w_shown = { { p = '4883ec28448b014c8bd1418bc0458bc883e0ef4183c91084d2440f44c8448909453bc174668b91b80000004183c9208bc24489090fbae80b8981b80000003bc27449f7d223d081e2ff2fffff7417488b89e00000004885c9740b41b001e8????????458b0a418bc1c1e802a801751c498b8af00000004183c90445890a4885c9',
+               here = true, twins = 0x5d } },
+  w_opacity = { { p = '40574883ec20f30f104144488bf90f2ec1', here = true } },
+  -- (w_attach: the whole child insert, so first child +0xE0, next sibling +0xE8 and parent +0xF0 are all checked)
+  w_attach = { { p = '40534883ec204c8bca488bd9488b91e00000004885d274??33c9488bc2493bd174??4c3bc876??488bc8488b80e80000004885c075??4885c975??498991e80000004c898be0000000eb??493bc974??488b81e8000000493bc174??498981e80000004c8989e8000000eb??4c8989e0000000418b91b80000008bc20fbae80d498999f0000000',
+                here = true } },
+  w_detach = { { p = '40534883ec20488bd9488b89f0000000', here = true } },
 }
+local HX_ITEMS = { 'ui_ctx', 'ui_stride', 'ui_slots', 'ui_top', 'ui_stack', 'ui_roots', 'ui_push', 'ui_pop', 'w_init', 'w_pinit', 'w_pset',
+  'w_size', 'w_anchor', 'w_pivot', 'w_pos', 'w_layer', 'w_shown', 'w_opacity', 'w_attach', 'w_detach' }
 local OPTIONAL = { rowid_r = ' (name fix off)', rowid_w = ' (name fix off)', rowstride = ' (rows checked by their SEAF id)' }
+for _, k in ipairs(HX_ITEMS) do OPTIONAL[k] = ' (no icons on HD2 HUD+\'s panel)' end
 local P_ORDER = { 'rack', 'proj', 'hud', 'hud_a', 'hud_b', 'hud_c', 'open', 'rowbase', 'rowstride', 'rowid_r', 'rowid_w' }
+for _, k in ipairs(HX_ITEMS) do P_ORDER[#P_ORDER + 1] = k end
 -- what the September 2026 game build has (game.dll 6ab3b43f, checked against its runtime dump); a cross-check: the
 -- log says what moved
 local KNOWN = { rack = 0x3326710, proj = 0x37c7670, hud = 0x346d538, hud_a = 0x24e340, hud_b = 0x146dc0,
-  hud_c = 0x1040, open = 0x38769, rowbase = 0x110, rowstride = 0x3760, rowid_r = 0x374c, rowid_w = 0x374c }
+  hud_c = 0x1040, open = 0x38769, rowbase = 0x110, rowstride = 0x3760, rowid_r = 0x374c, rowid_w = 0x374c,
+  ui_ctx = 0x347ce90, ui_stride = 0x3698, ui_slots = 13, ui_top = 0x2c5bc, ui_stack = 0x2c5b9, ui_roots = 0x3680, ui_push = 0x12ef4b0, ui_pop = 0x12ef4d0,
+  w_init = 0x1446840, w_pinit = 0x143eab0, w_pset = 0x1450230, w_size = 0x1447160, w_anchor = 0x144f160,
+  w_pivot = 0x144f0d0, w_pos = 0x14476a0, w_layer = 0x14491f0, w_shown = 0x144cfb0, w_opacity = 0x1448ad0,
+  w_attach = 0x144c5c0, w_detach = 0x144e6c0 }
 local KNOWN_BUILD = '6ab3b43f-04744000-0210fa93'   -- that build's game.dll (time stamp, image size, code size)
 local CACHE = LOGDIR and (LOGDIR .. '\\' .. LOGNAME .. '.cache') or nil
 
@@ -235,6 +280,8 @@ end
 
 -- an item's value at match o of text (rva: the game address of text's first byte); nil when its two places disagree
 local function value_at(text, o, p, rva)
+  if p.here then return rva + o end                      -- (2.0.0) the match is the function itself
+  if p.u8 then return text:byte(o + p.at + 1) end        -- (2.0.0) a one-byte number
   local v = p.rip and (rva + o + p.at + 4 + si32(text, o + p.at)) or su32(text, o + p.at)
   if p.also and su32(text, o + p.also) ~= v then return nil end
   return v
@@ -288,6 +335,26 @@ local function plausible(found, at, notes)
     found.rowid_r, at.rowid_r = -1, ''
     notes[#notes + 1] = string.format('rowid_r %x not plausible%s', id, OPTIONAL.rowid_r)
   end
+  -- (2.0.0) the UI items: all or none (HD2 HUD+'s panel needs every one); a context between 4 and 64 KiB, at most 32
+  -- of them, the stack's top inside the context array's tail
+  local bad, any, missing = nil, false, false
+  for _, k in ipairs(HX_ITEMS) do
+    if found[k] == -1 then missing = true else any = true end
+  end
+  if missing then bad = any and '' or nil      -- (the scan's own list says which one): the others are dropped too
+  elseif (found.ui_stride < 0x1000 or found.ui_stride > 0x10000 or found.ui_slots < 1 or found.ui_slots > 32
+      or found.ui_top < found.ui_stride * found.ui_slots or found.ui_top > found.ui_stride * found.ui_slots + 0x1000
+      or found.ui_stack >= found.ui_top or found.ui_stack < found.ui_top - 64
+      or found.ui_roots < 0x100 or found.ui_roots + 0x14 > found.ui_stride) then
+    bad = string.format('UI contexts not plausible (%x x %d, top %x, stack %x, roots %x)', found.ui_stride,
+      found.ui_slots, found.ui_top, found.ui_stack, found.ui_roots)
+  end
+  if bad then
+    for _, k in ipairs(HX_ITEMS) do
+      if found[k] ~= -1 then found[k], at[k] = -1, '' end
+    end
+    if bad ~= '' and not notes.hx then notes.hx = true; notes[#notes + 1] = bad .. OPTIONAL.ui_ctx end
+  end
   return true
 end
 
@@ -317,7 +384,15 @@ local function resolve()
     for _, name in ipairs(P_ORDER) do
       local val, disagree, where = nil, false, {}
       for pi, p in ipairs(P[name]) do
-        for _, o in ipairs(find_all(text, p.p)) do
+        local hits = find_all(text, p.p)
+        -- (2.0.0) a function the compiler made twice (identical, calling the same function): the first one is used
+        if p.twins and #hits > 1 then
+          local function target(o) return o + p.twins + 5 + si32(text, o + p.twins + 1) end
+          local same = true
+          for j = 2, #hits do if target(hits[j]) ~= target(hits[1]) then same = false end end
+          if same then hits = { hits[1] } end
+        end
+        for _, o in ipairs(hits) do
           local v = value_at(text, o, p, G.code.rva)
           if v == nil or (val and val ~= v) then disagree = true end
           val = val or v
@@ -345,6 +420,9 @@ local function resolve()
   local A = {}
   for k, v in pairs(found) do if v ~= -1 then A[k] = v end end
   for _, k in ipairs({ 'rack', 'proj', 'hud' }) do A[k] = G.base + A[k] end
+  for _, k in ipairs(HX_ITEMS) do
+    if A[k] and (k:sub(1, 2) == 'w_' or k == 'ui_ctx' or k == 'ui_push' or k == 'ui_pop') then A[k] = G.base + A[k] end
+  end
   session.layout = how
   session.scan_seconds = os.clock() - t0
   return A
@@ -372,22 +450,7 @@ local BAR_TEXTURE             -- (1.1.0) the next shell's yellow bar on HD2 HUD+
 SS.textures = {}
 for _, k in ipairs(KINDS) do SS.textures[k.id] = k.texture end
 
--- (1.1.0) HD2 HUD+: this mod's second Lua resource is an HD2 HUD+ add-on that draws the shells on HUD+'s own stratagem
--- panel. It takes what this addon has already read from here, the same frame HUD+ draws: the shells (kind ids, next
--- first), whether the icons are on, the game list's SEAF row index and the row layout found in the game code.
-local HP = { on = false, kinds = {}, textures = SS.textures, bar = BAR_TEXTURE, layout = nil, index = nil, opening = 0,
-  row_id = 28,
-  -- (1.1.1) the add-on reads memory through this addon's safe reader (a bad address fails cleanly), never through
-  -- HD2 HUD+'s own reader, which changes between HUD+ versions and from 0.2.4 on reads memory directly
-  mem = { bytes = read_string, ptr = read_ptr, u32 = function(addr) return fetch(addr, 4) and b32(0) or nil end } }
-SS.hudplus = HP
-local hp = { state = nil, detail = nil }
-SS.hudplus_note = function(state, detail)        -- the add-on's state, for the log
-  if state == hp.state and detail == hp.detail then return end
-  hp.state, hp.detail = state, detail
-  event('HD2 HUD+ add-on: ' .. tostring(state) .. (detail ~= nil and (' (' .. tostring(detail) .. ')') or ''))
-end
-local hp_none = {}
+local openings = 0            -- times the list opened (spoof builds move their shells on by one each time)
 local SEAF_STRATAGEM = 28
 local ROW_ID = SEAF_STRATAGEM   -- the stratagem id of the row the icons go on (spoof builds: the list's first row)
 
@@ -419,17 +482,13 @@ end
 -- ======================================================================================================
 local queue = { kinds = {}, sig = '', text = 'none', fails = 0 }   -- sig nil: read again next time
 local function by_ready(a, b) if a.ready ~= b.ready then return a.ready < b.ready end return a.i < b.i end
-local function hp_sync(kinds)                    -- (1.1.0) the add-on's shell list: kind ids, next first
-  local k = HP.kinds
-  for i = 1, math.max(#k, #kinds) do local q = kinds[i]; k[i] = q and q.id or nil end
-end
 
 -- spoof builds: 5 shells (the most the artillery holds) from a cycle of every shell type, moving on by one each time
 -- the list opens (the next one fired, a new type loaded at the back): over 6 openings each type is next once
 local SPOOF_LOAD = { 'high_yield', 'mini_nuke', 'napalm', 'static_field', 'smoke', 'explosive' }
 local SPOOF_HELD = 5
 local function spoof_queue()
-  local n, shift = #SPOOF_LOAD, math.max(0, HP.opening - 1)
+  local n, shift = #SPOOF_LOAD, math.max(0, openings - 1)
   local kinds, names, same = {}, {}, true
   for i = 1, SPOOF_HELD do
     kinds[i] = KIND[SPOOF_LOAD[(i - 1 + shift) % n + 1]]
@@ -803,7 +862,7 @@ local function find_seaf_row(first)   -- a row's stratagem id at ID_AT (its slot
     for i = 0, ROWS - 1 do
       local at = first + i * ROW_STRIDE
       if fetch(at + ID_AT, 4) and b32(0) > 0 and b32(0) < 0x10000 then
-        ROW_ID = b32(0); HP.row_id = ROW_ID
+        ROW_ID = b32(0)
         return at, i
       end
     end
@@ -824,6 +883,502 @@ local function find_seaf_row(first)   -- a row's stratagem id at ID_AT (its slot
     event(string.format('%d rows have the SEAF Artillery id (the row stride is not from the game code): none used', n))
   end
   return nil
+end
+
+-- ======================================================================================================
+-- (2.0.0) HD2 HUD+'s stratagem panel. HUD+ hides the game's stratagem list and shows its own copy: the game's own
+-- stratagem panel, made by HUD+ in its own memory and filled by the game's own code (row ids included), in HUD+'s UI
+-- context. The icons go on that panel's SEAF Artillery row as the game's own UI widgets: a frame holding the bar and
+-- 5 pictures, made and attached with the game's own UI calls (found in the game code at start-up), the same way
+-- HUD+ puts its own widgets on the game's rows. They then move, slide and fade with HUD+'s panel by themselves.
+-- Nothing of HUD+ itself is used (no add-on, no HUD+ code or numbers), so a HUD+ update can't break this unless HUD+
+-- stops using the game's stratagem panel. Safety: every game call is made only after reading (with the safe reader)
+-- that what it touches is what it should be; our widgets live in our own memory, which is never freed; the frame
+-- is re-attached when HUD+ rebuilds its rows; a marker file skips this once if a game ever closed while trying it.
+-- ======================================================================================================
+local hx_hide, hx_closed, hx_opened, hx_step, hx_line, hx_proven   -- (the panel's own locals stay inside this block)
+do
+local HX = { state = nil, detail = nil, off = nil, list = nil, row = nil, idx = nil, slot = nil, check = 0,
+  tries = 0, turn = 0, lost = 0, skip = nil, base = nil, made = 0, attached = 0, found = 0, fshown = false, bshown = false,
+  tex = {}, shown = {}, watch = nil, seen = false, ids = {} }
+local HX_MAX = 5              -- icons: the artillery holds 5 shells at most
+local HX_SPAN = 0x400         -- memory per widget (the game's frame needs 272 bytes, a picture 352: room to grow)
+local HX_TRIES = 40           -- searches each opening at most (one context each, every frame)
+local HX_WALK = 1000          -- widgets looked at, at most, in one context (HUD+'s has had 16 to 62)
+local W_CHILD, W_NEXT, W_PARENT, W_CTX, W_LAYER = 0xe0, 0xe8, 0xf0, 0xf8, 0xbc   -- (in the call patterns too)
+local COLOR_MATERIAL = '9448536c2d6ae780'   -- the game's picture material (one of its UI materials each widget
+                                            -- gets its own copy of; 1.1.0 Test 3), shows a texture in its colors
+local ICON, STEP, GAP = 58, 27, 12          -- row units (the row is 68 high): as on HD2 HUD+'s panel since 1.1.0
+local HXCHECK = LOGDIR and (LOGDIR .. '\\' .. LOGNAME .. '.hudcheck') or nil
+
+local function hx_note(state, detail)
+  if state == HX.state and detail == HX.detail then return end
+  HX.state, HX.detail = state, detail
+  event('HD2 HUD+ panel: ' .. state .. (detail and (' (' .. detail .. ')') or ''))
+end
+function hx_line()
+  local st = HX.off and ('off: ' .. HX.off) or HX.state
+  if not st then return cover.hudplus and 'not needed yet (HUD+\'s stratagem list not opened)' or 'HD2 HUD+ not seen' end
+  return st .. (HX.detail and (' (' .. HX.detail .. ')') or '')
+    .. string.format('; found %d times, made %d, attached %d', HX.found, HX.made, HX.attached)
+    .. (HX.most and string.format('; most widgets looked at in a frame %d', HX.most) or '')
+end
+
+-- our own memory (read and written directly: it's ours)
+local PU64 = ffi.typeof('uint64_t *')
+local function own_u32(at) return tonumber(cast(PU32, at)[0]) end
+local function own_ptr(at)
+  local v = tonumber(cast(PU64, at)[0])
+  if v < 65536 or v >= 140737488355328 then return nil end
+  return v
+end
+local function own_zero(at) cast(PU64, at)[0] = 0 end
+local HXMEM                   -- kept for the whole session, never freed: the game keeps pointers into it
+local HXW
+local function hx_memory()
+  if HXW then return HXW end
+  HXMEM = ffi.new('uint8_t[?]', HX_SPAN * (2 + HX_MAX) + 16)
+  local base = tonumber(ffi.cast('uintptr_t', HXMEM))
+  base = base + (16 - base % 16) % 16
+  -- children are kept in address order and drawn in it: the bar first, then icon 5 .. icon 1 (the next shell on top)
+  HXW = { frame = base, bar = base + HX_SPAN, icon = {} }
+  for j = 1, HX_MAX do HXW.icon[j] = base + HX_SPAN * (2 + HX_MAX - j) end
+  return HXW
+end
+
+-- the game's UI calls (function pointers into game.dll, found by their code at start-up)
+local HXF
+local PAIR = ffi.new('union { float f[2]; uint64_t u; }')
+local function hx_calls()
+  if HXF ~= nil then return HXF end
+  HXF = false
+  if not (L.ui_ctx and L.w_detach) then return false end
+  local ok = pcall(function()
+    local c = ffi.cast
+    HXF = {
+      push = c('void (*)(uint64_t, uint8_t)', L.ui_push), pop = c('void (*)(void)', L.ui_pop),
+      init = c('void (*)(uint64_t, int32_t)', L.w_init), pinit = c('void (*)(uint64_t)', L.w_pinit),
+      pset = c('void (*)(uint64_t, uint64_t, uint64_t, uint8_t)', L.w_pset),
+      size = c('void (*)(uint64_t, uint64_t)', L.w_size), anchor = c('void (*)(uint64_t, uint64_t)', L.w_anchor),
+      pivot = c('void (*)(uint64_t, uint64_t)', L.w_pivot), pos = c('void (*)(uint64_t, uint64_t)', L.w_pos),
+      layer = c('void (*)(uint64_t, int16_t)', L.w_layer), shown = c('void (*)(uint64_t, uint8_t)', L.w_shown),
+      opacity = c('void (*)(uint64_t, float)', L.w_opacity),
+      attach = c('void (*)(uint64_t, uint64_t)', L.w_attach), detach = c('void (*)(uint64_t)', L.w_detach),
+    }
+  end)
+  if not ok then HXF = false end
+  return HXF
+end
+local function pair(fn, at, x, y) PAIR.f[0], PAIR.f[1] = x, y; fn(at, PAIR.u) end
+local function hx_id(hex)     -- a resource id (16 hex digits) as the game's uint64
+  local v = HX.ids[hex]
+  if v == nil then
+    v = ffi.new('uint64_t', tonumber(hex:sub(1, 8), 16)) * 4294967296 + tonumber(hex:sub(9, 16), 16)
+    HX.ids[hex] = v
+  end
+  return v
+end
+local function hx_loaded(kind, hex)
+  local App, IDS = SR and rawget(SR, 'Application'), SR and rawget(SR, 'IdString64')
+  if type(App) ~= 'table' or type(IDS) ~= 'table' then return false end
+  local ok, id = pcall(IDS.from_hex, hex)
+  if not ok then return false end
+  local okc, yes = pcall(App.can_get, kind, id)
+  return okc and yes == true
+end
+
+-- foreign memory, read safely
+local function bu64(o) return b32(o) + b32(o + 4) * 4294967296 end
+local function i32_at(addr)
+  if not fetch(addr, 4) then return nil end
+  local v = b32(0)
+  return v >= 2147483648 and v - 4294967296 or v
+end
+local function alive(at) return fetch(at, 4) and b32(0) ~= 0 end
+local function child_of(parent, w)          -- w is among parent's children
+  local c = read_ptr(parent + W_CHILD)
+  for _ = 1, 256 do
+    if not c then return false end
+    if c == w then return true end
+    c = read_ptr(c + W_NEXT)
+  end
+  return false
+end
+local function slot_of(ctx)
+  if not ctx or not HX.base then return nil end
+  local d = ctx - HX.base
+  if d < 0 or d % L.ui_stride ~= 0 or d / L.ui_stride >= L.ui_slots then return nil end
+  return d / L.ui_stride
+end
+
+-- fn() run with UI context `slot` pushed, as the game and HUD+ do while making widgets: the push and the pop are
+-- checked (the stack's top and its new slot); false, why when it couldn't be done
+local function hx_within(slot, fn)
+  local base = HX.base
+  if read_ptr(L.ui_ctx) ~= base then return false, 'the UI contexts moved' end
+  if not fetch(base + slot * L.ui_stride, 1) or b8(0) ~= 1 then return false, 'context not live' end
+  local top_at = base + L.ui_top
+  local top = i32_at(top_at)
+  if not top or top < -1 or top >= L.ui_top - L.ui_stack then return false, 'context stack' end
+  HXF.push(base, slot)
+  if i32_at(top_at) ~= top + 1 or not fetch(base + L.ui_stack + top, 1) or b8(0) ~= slot then
+    if i32_at(top_at) == top + 1 then HXF.pop() end
+    return false, 'context push'
+  end
+  local ok, err = pcall(fn)
+  if read_ptr(L.ui_ctx) == base and i32_at(top_at) == top + 1 then HXF.pop() end
+  if i32_at(top_at) ~= top then return false, 'context pop' end
+  if not ok then return false, tostring(err) end
+  return true
+end
+
+-- the roots of context ctx: a small set near its end (the game's own: data, or its distance back with flag 4;
+-- capacity; empty mark; flags), each root a widget of that context
+local found_roots = {}
+local function hx_roots(ctx)
+  local set, out = ctx + L.ui_roots, found_roots
+  if not fetch(set, 0x14) then return 0 end
+  local off, cap, empty, flags = bu64(0), b32(8), b32(12), b32(16)
+  if cap == 0 or cap > 1024 then return 0 end
+  local data = bit.band(flags, 4) ~= 0 and (set - off) or off
+  if not fetch(data, cap * 8) then return 0 end
+  local n = 0
+  for k = 0, cap - 1 do
+    local w = bu64(k * 8)
+    if w ~= empty and w >= 65536 and w < 140737488355328 then n = n + 1; out[n] = w end
+  end
+  local m = 0
+  for i = 1, n do
+    local w = out[i]; out[i] = nil
+    if read_ptr(w + W_CTX) == ctx then m = m + 1; out[m] = w end
+  end
+  return m
+end
+-- (Test 2) a widget is on screen: it and every widget above it shown, their opacities not (nearly) 0
+local function hx_visible(w)
+  local a = 1
+  for _ = 1, 32 do
+    if not fetch(w, W_CTX) or bit.band(b32(0), 0x10) == 0 then return false end
+    a = a * (bf32(OPACITY) or 0)
+    local q = bptr(W_PARENT)
+    if not q then return a > 0.01 end
+    w = q
+  end
+  return false
+end
+-- (Test 2) the game's own list's row ids (the player's stratagems), read on search frames: HUD+'s panel shows the same
+-- player's list. (Test 1 found other copies of the game's stratagem panel first, in contexts 6 and 7.)
+local want = {}
+local function hx_want(game_list)
+  local base = game_list + L.rowbase + ID_AT
+  for k = 0, ROWS - 1 do want[k] = fetch(base + k * ROW_STRIDE, 4) and b32(0) or 0 end
+end
+local told = {}                                    -- (TESTER) why a context's list wasn't taken, once each opening
+local function hx_tell(slot, why)
+  local key = slot .. why                         -- (each reason once per context and opening)
+  if TESTER and not told[key] then told[key] = true; event(string.format('HD2 HUD+ panel: context %d: %s', slot, why)) end
+end
+-- the stratagem list in context `slot` showing the player's list, on screen: a widget whose first row (inside it)
+-- hangs under it, its row ids the game list's, our row (by its id) on screen; a depth-first walk from the roots.
+-- Returns the list, the row, its index, the widgets looked at; or nil, true when the player's list is there but
+-- not on screen yet (it fades in as the list opens)
+local function hx_search(slot)
+  local ctx = HX.base + slot * L.ui_stride
+  if not fetch(ctx, 1) or b8(0) ~= 1 then return nil end
+  local stack, visited = found_roots, {}            -- (visited: a broken link loop is walked once)
+  local n, seen = hx_roots(ctx), 0
+  local rb, hit, at, idx, onlist = L.rowbase, nil, nil, nil, false
+  while n > 0 and seen < HX_WALK do
+    local w = stack[n]; stack[n] = nil; n = n - 1
+    if visited[w] then goto next end
+    visited[w] = true
+    seen = seen + 1
+    -- one read per widget ((2.0.0 review)): its links and, for a list, its first row's parent
+    local child, sib, list
+    if fetch(w, rb + W_PARENT + 8) then
+      child, sib, list = bptr(W_CHILD), bptr(W_NEXT), bptr(rb + W_PARENT) == w
+    elseif fetch(w + W_CHILD, 16) then
+      child, sib = bptr(0), bptr(8)
+    end
+    if list then
+      local same, mine, r = 0, nil, nil
+      for k = 0, ROWS - 1 do
+        local id = fetch(w + rb + k * ROW_STRIDE + ID_AT, 4) and b32(0) or 0
+        if id ~= 0 and want[k] ~= 0 and id ~= want[k] then same = -1; break end
+        if id ~= 0 and id == want[k] then same = same + 1 end
+        if id == ROW_ID and not mine then mine = k end
+      end
+      if same <= 0 or not mine then
+        hx_tell(slot, same < 0 and 'a stratagem list, not the player\'s' or 'a stratagem list without our row (yet)')
+      else
+        r = w + rb + mine * ROW_STRIDE
+        if read_ptr(r + W_PARENT) ~= w then hx_tell(slot, 'our row does not hang under its list')
+        elseif not hx_visible(r) then onlist = true; hx_tell(slot, 'the player\'s list, not on screen')
+        else hit, at, idx = w, r, mine; break end
+      end
+    end
+    if sib then n = n + 1; stack[n] = sib end
+    if child then n = n + 1; stack[n] = child end
+    ::next::
+  end
+  for k = n, 1, -1 do stack[k] = nil end
+  if hit then return hit, at, idx, seen end
+  return nil, onlist, nil, seen
+end
+-- the row is still the SEAF row of the list it was found in, and that list still hangs (through live widgets of the
+-- row's context) from one of the context's roots: HUD+ drops its panel when it rebuilds it elsewhere
+local function hx_row_ok()
+  local r, x = HX.row, HX.list
+  if not (alive(r) and read_ptr(r + W_PARENT) == x and fetch(r + ID_AT, 4) and b32(0) == ROW_ID) then return false end
+  local ctx = read_ptr(r + W_CTX)
+  if not ctx then return false end
+  local p = x
+  for _ = 1, 32 do
+    if not fetch(p, W_CTX + 8) or b32(0) == 0 or bptr(W_CTX) ~= ctx then return false end
+    local q = bptr(W_PARENT)
+    if not q then
+      local n, yes = hx_roots(ctx), false
+      for k = 1, n do
+        if found_roots[k] == p then yes = true end
+        found_roots[k] = nil
+      end
+      return yes
+    end
+    p = q
+  end
+  return false
+end
+-- our frame hangs under the row, in the row's context
+local function hx_attached()
+  local F = HXW and HXW.frame
+  if not F or own_u32(F) == 0 or own_ptr(F + W_PARENT) ~= HX.row then return false end
+  return own_ptr(F + W_CTX) == read_ptr(HX.row + W_CTX) and child_of(HX.row, F)
+end
+
+-- the game's checks, once: the calls, our memory, the material and textures loaded, and the marker file
+local function hx_ready()
+  if HX.ready ~= nil then return HX.ready end
+  local why
+  if not hx_calls() then why = 'the game\'s UI calls were not found in its code'
+  elseif not hx_loaded('material', COLOR_MATERIAL) then
+    hx_note('waiting', 'the game\'s picture material is not loaded yet'); return false
+  else
+    local missing = {}
+    for _, k in ipairs(KINDS) do if not k.texture or not hx_loaded('texture', k.texture) then missing[#missing + 1] = k.id end end
+    if not BAR_TEXTURE or not hx_loaded('texture', BAR_TEXTURE) then missing[#missing + 1] = 'bar' end
+    if #missing > 0 then why = 'our textures are not loaded: ' .. table.concat(missing, ', ') end
+  end
+  if not why and HXCHECK then
+    local f = io.open(HXCHECK, 'r')
+    local last = f and f:read('*a'); if f then f:close() end
+    if last and last:find('^trying') then
+      why = 'skipped this start: the last game closed while trying it (tried again next start)'
+      f = io.open(HXCHECK, 'w'); if f then f:write('skipped once\n'); f:close() end
+    else
+      f = io.open(HXCHECK, 'w'); if f then f:write('trying\n'); f:close() end
+      HX.watch = 60
+    end
+  end
+  if why then HX.off = why; event('HD2 HUD+ panel: off: ' .. why); HX.ready = false; return false end
+  hx_memory()
+  HX.ready = true
+  return true
+end
+function hx_proven(closing)
+  -- ((2.0.0 review) a normal close proves there was no crash, shown or not)
+  if HX.watch and (HX.seen or closing) and HXCHECK then
+    HX.watch = nil
+    local f = io.open(HXCHECK, 'w'); if f then f:write('ok\n'); f:close() end
+  end
+end
+
+-- our frame's parent checks out for a game call on the frame (show/hide, detach): the frame alive, its parent alive,
+-- in the frame's context and listing it, and that context live ((2.0.0 review) no row id needed: hiding must also
+-- work when HUD+'s row already shows another stratagem)
+local function hx_parent_ok()
+  local F = HXW.frame
+  local p, ctx = own_ptr(F + W_PARENT), own_ptr(F + W_CTX)
+  if own_u32(F) == 0 or not p or not ctx or not slot_of(ctx) then return false end
+  if not fetch(ctx, 1) or b8(0) ~= 1 then return false end
+  if not fetch(p, W_CTX + 8) or b32(0) == 0 or bptr(W_CTX) ~= ctx then return false end
+  return child_of(p, F)
+end
+-- our frame taken off whatever it hangs under: detached by the game when its parent still lists it (and checks out);
+-- links cleared by us when its parent no longer has it (HUD+ rebuilt the row in place). false: left as it was
+local function hx_unlink()
+  local F = HXW.frame
+  local p = own_ptr(F + W_PARENT)
+  if not p then return true end
+  if own_u32(F) ~= 0 and alive(p) and child_of(p, F) then
+    if not hx_parent_ok() then return false end
+    HXF.detach(F)
+    if child_of(p, F) then return false end
+  end
+  own_zero(F + W_NEXT); own_zero(F + W_PARENT)
+  return true
+end
+-- the frame, bar and icons made (in the row's context) and laid out
+local function hx_make(layer)
+  local M, f = HXW, HXF
+  local F = M.frame
+  f.init(F, 1)
+  f.pinit(M.bar)
+  for j = 1, HX_MAX do f.pinit(M.icon[j]) end
+  pair(f.anchor, F, 1, 0.5); pair(f.pivot, F, 0, 0.5); pair(f.pos, F, GAP, 0)
+  pair(f.size, F, ICON + STEP * (HX_MAX - 1), ICON)
+  pair(f.anchor, M.bar, 0, 0); pair(f.pivot, M.bar, 0, 0.5); pair(f.pos, M.bar, ICON * 0.18, 0)
+  pair(f.size, M.bar, ICON * 0.64, 3); f.layer(M.bar, layer); f.shown(M.bar, 0)
+  f.attach(F, M.bar)
+  for j = HX_MAX, 1, -1 do
+    local at = M.icon[j]
+    pair(f.anchor, at, 0, 0.5); pair(f.pivot, at, 0, 0.5); pair(f.pos, at, (j - 1) * STEP, 0)
+    pair(f.size, at, ICON, ICON); f.layer(at, layer); f.opacity(at, j == 1 and 1 or 0.82); f.shown(at, 0)
+    f.attach(F, at)
+  end
+end
+local function hx_attach()
+  local R, F = HX.row, HXW.frame
+  local ctx = read_ptr(R + W_CTX)
+  local slot = slot_of(ctx)
+  if not slot then hx_note('not shown', 'the row\'s UI context is not one of the game\'s'); return false end
+  if not hx_unlink() then hx_note('not shown', 'our frame could not be taken off its old row'); return false end
+  local fresh = own_u32(F) == 0 or own_ptr(F + W_CTX) ~= ctx
+  -- the layer: one above the highest among the row's widgets (its card and texts, at any depth), so the icons are
+  -- drawn on top of the row ((Test 2) Test 1 looked only at the row's direct children: 0 on HUD+'s rows)
+  local layer, stack, k = 0, { read_ptr(R + W_CHILD) }, 0
+  while #stack > 0 and k < 256 do
+    local c = stack[#stack]; stack[#stack] = nil; k = k + 1
+    if c and fetch(c + W_LAYER, W_NEXT + 8 - W_LAYER) then
+      local v = BUF[0] + BUF[1] * 256
+      if v < 32768 and v > layer then layer = v end
+      local sib, child = bptr(W_NEXT - W_LAYER), bptr(W_CHILD - W_LAYER)
+      if sib then stack[#stack + 1] = sib end
+      if child then stack[#stack + 1] = child end
+    end
+  end
+  layer = math.min(layer + 1, 32767)
+  if fresh then
+    -- ((2.0.0 review) the caches go before the calls: picture_init clears a picture's texture, and the make may have
+    -- run even when the context pop check fails; nil = not known, set again)
+    HX.fshown, HX.bshown, HX.btex = nil, nil, nil
+    for j = 1, HX_MAX do HX.tex[j], HX.shown[j] = nil, nil end
+  end
+  local ok, why = hx_within(slot, function()
+    if fresh then hx_make(layer) end
+    HXF.attach(R, F)
+  end)
+  if fresh and ok then
+    HX.made = HX.made + 1
+    if TESTER then event(string.format('HD2 HUD+ panel: icons made in UI context %d (layer %d)', slot, layer)) end
+  end
+  if not ok or not hx_attached() then
+    hx_note('not shown', why or 'our frame did not attach')
+    return false
+  end
+  HX.attached = HX.attached + 1
+  return true
+end
+-- the textures and what's shown, set only where they changed
+local function hx_show()
+  local M, f, kinds = HXW, HXF, queue.kinds
+  local mat = hx_id(COLOR_MATERIAL)
+  for j = 1, HX_MAX do
+    local k = kinds[j]
+    local tex = k and k.texture
+    if tex and tex ~= HX.tex[j] then f.pset(M.icon[j], mat, hx_id(tex), 0); HX.tex[j] = tex end
+    if (tex ~= nil) ~= HX.shown[j] then f.shown(M.icon[j], tex and 1 or 0); HX.shown[j] = tex ~= nil end
+  end
+  local bar = #kinds > 0
+  if bar and not HX.btex then f.pset(M.bar, mat, hx_id(BAR_TEXTURE), 0); HX.btex = true end
+  if bar ~= HX.bshown then f.shown(M.bar, bar and 1 or 0); HX.bshown = bar end
+  if HX.fshown ~= true then f.shown(M.frame, 1); HX.fshown = true end
+end
+-- hidden (the icons turned off, no shells): only when the call is safe (the frame hangs nowhere, or its parent
+-- checks out); otherwise tried again up to four times a second ((2.0.0 review) Test 2 marked it hidden either way)
+function hx_hide()
+  if HX.fshown == false or not HXF or not HXW then return end
+  local now = os.clock()
+  if now < (HX.hide_next or 0) then return end
+  HX.hide_next = now + 0.25
+  local F = HXW.frame
+  if own_u32(F) == 0 then HX.fshown = false; return end      -- not alive: not drawn, made again before showing
+  if not own_ptr(F + W_PARENT) or hx_parent_ok() then HXF.shown(F, 0); HX.fshown = false end
+end
+-- the list closed (or the addon stops): our frame taken off HUD+'s row, so it never hangs under memory nobody checks
+-- ((2.0.0 review)); hidden instead when that can't be done now
+function hx_closed()
+  HX.check = 0
+  if not HXF or not HXW then return end
+  if own_ptr(HXW.frame + W_PARENT) and not hx_unlink() then hx_hide() end
+end
+-- each opening ((2.0.0 review) whatever the shells and the options, so an opening that gets its shells late still
+-- searches)
+function hx_opened(game_list)
+  if HX.off then return end
+  local missed = HX.max ~= nil and HX.tries > 0 and not HX.row
+  HX.max = missed and 12 or HX_TRIES              -- fewer searches after an opening that found nothing
+  HX.tries, HX.turn, HX.check, HX.lost = 0, 0, 0, 0
+  for k in pairs(told) do told[k] = nil end
+  HX.base = read_ptr(L.ui_ctx)
+  HX.skip = slot_of(read_ptr(game_list + W_CTX))     -- the game's own list: not HUD+'s
+end
+
+-- every frame while the list is open with shells loaded and the icons on
+function hx_step(now, changed, game_list)
+  if HX.off then return end
+  -- the marker file: 'ok' once the icons have been up on HUD+'s panel for 60 frames
+  if HX.watch and HX.seen and HX.fshown and HX.row then
+    HX.watch = HX.watch - 1
+    if HX.watch <= 0 then hx_proven() end
+  end
+  local due = changed or now >= HX.check
+  if HX.row and due then
+    HX.check = now + 0.25
+    if not hx_row_ok() then
+      -- the row moved, or HUD+ rebuilt its panel: off the old row now, then searched for again (a few times each
+      -- opening at most)
+      HX.row = nil
+      if HXF and HXW and not hx_unlink() then hx_hide() end
+      if HX.lost < 3 then HX.lost, HX.tries = HX.lost + 1, 0 end
+      if TESTER then event('HD2 HUD+ panel: the row or panel changed; looking again') end
+    end
+  end
+  if not HX.row then
+    if not (cover.hudplus and cover.known) or not HX.base or HX.tries >= (HX.max or HX_TRIES) then return end
+    if SPOOF and not row.at then return end          -- (spoof: our row is the game list's first, found there first)
+    HX.tries = HX.tries + 1
+    -- one context a frame: the one HUD+'s panel was in last time every other frame, the others in turn between
+    local slot = HX.slot
+    if not slot or HX.tries % 2 == 0 then
+      for _ = 1, L.ui_slots do        -- (a context that isn't live costs no frame)
+        HX.turn = HX.turn % L.ui_slots + 1
+        slot = HX.turn - 1
+        if slot ~= HX.skip and slot ~= HX.slot and fetch(HX.base + slot * L.ui_stride, 1) and b8(0) == 1 then break end
+      end
+    end
+    if slot == HX.skip then return end
+    hx_want(game_list)
+    local x, at, i, seen = hx_search(slot)
+    if TESTER and seen > (HX.most or 0) then HX.most = seen end
+    if not x then
+      if at then HX.slot = slot end            -- the player's list, not on screen yet: tried every other frame
+      if HX.tries >= (HX.max or HX_TRIES) then hx_note('HUD+\'s panel not found', 'is its stratagem panel option off?') end
+      return
+    end
+    if not hx_ready() then HX.tries = HX_TRIES; return end
+    HX.found = HX.found + 1
+    if TESTER or HX.found == 1 then                 -- (the first find; every one in Tester builds)
+      event(string.format('HD2 HUD+ panel: found in UI context %d (row %d; %d widgets looked at, try %d)', slot, i, seen, HX.tries))
+    end
+    HX.list, HX.row, HX.idx, HX.slot, HX.check = x, at, i, slot, now + 0.25
+    due = true
+  end
+  if not due or not hx_ready() then return end
+  if not hx_attached() and not hx_attach() then HX.row = nil; return end
+  hx_show()
+  hx_note('showing', 'row ' .. tostring(HX.idx))
+  HX.seen = true
+end
 end
 
 -- ======================================================================================================
@@ -911,13 +1466,11 @@ local function tick()
     L = res
     ROW_STRIDE, ROW_ONE = L.rowstride or KNOWN.rowstride, not L.rowstride
     ID_AT = L.rowid_r and L.rowid_r == L.rowid_w and L.rowid_r or KNOWN.rowid_r
-    HP.layout = { rowbase = L.rowbase, stride = ROW_STRIDE, id = ID_AT }
     event('game addresses: ' .. session.layout .. string.format(' (%.2f s)', session.scan_seconds))
   end
   -- both off in the options menu: the addresses are still found at start-up (no hitch when turned on), nothing else
-  HP.on = enabled
   if not enabled and not fix_name then
-    if #HP.kinds > 0 then hp_sync(hp_none) end
+    hx_hide()
     if fix.pending then fix_restore() end
     if open_was then
       release_gui(); open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
@@ -939,9 +1492,8 @@ local function tick()
   local open = parent and fetch(parent + L.open, 1) and b8(0) or nil
   fix_settle(now, open and open == 1)
   if open ~= 1 then
-    if #HP.kinds > 0 then hp_sync(hp_none) end
-    HP.index = nil
     if open_was then
+      hx_closed()
       release_gui()                              -- ((1.0.1 review) both ways: the world is checked first)
       open_was = false; view.sig = nil; row.at, row.looked, row.told = nil, -1, nil
       icons_proven()
@@ -954,7 +1506,8 @@ local function tick()
   local opened = not open_was
   open_was = true
   if opened then
-    HP.opening = HP.opening + 1
+    openings = openings + 1
+    hx_opened(parent + L.hud_c)
     cover.fast_until, cover.since, row.alpha = now + 0.6, nil, nil
     if cover.known == nil then
       local ok, found = pcall(function() return SR.Application.can_get('lua', HUDPLUS) end)
@@ -976,13 +1529,15 @@ local function tick()
   if opened or now >= next_queue then
     next_queue = now + 0.25
     changed = read_queue()
-    hp_sync(queue.kinds)
   end
+  if #queue.kinds == 0 or not enabled then hx_hide() end
   if #queue.kinds == 0 then
     if view.sig then release_gui(); view.sig = nil end
     fix.kind = nil                               -- a new mission starts the name fix afresh
     return
   end
+  -- (2.0.0) HD2 HUD+'s stratagem panel (its own copy of the list, which it shows instead of the game's)
+  if enabled then hx_step(now, changed, parent + L.hud_c) end
   -- the row still shows SEAF Artillery (checked when the shells change and once a second)
   if row.at and fix.pending ~= row.at and (changed or now >= row.checked) then
     row.checked = now + 1
@@ -1000,7 +1555,6 @@ local function tick()
       local chain = chain_of(at)
       if chain and #chain >= 3 then
         row.at, row.chain, row.checked, row.alpha, row.wr, row.wl, row.hud = at, chain, now + 1, nil, {}, {}, hud
-        HP.index = i
         local l, b, w, h = rect_of(chain)
         -- logged when it differs from last time (its x changes with the slide-in, so it's left out of the check)
         local key = string.format('%d,%d,%.0f,%.0f,%.0f,%.3f', i, #chain, b, w, h, chain[#chain].sx)
@@ -1097,12 +1651,7 @@ local function write_log()
   f:write('name fix: ', fix.off or (not fix_name and 'off (options menu)') or (not L and 'waiting for the game addresses')
     or (not (L.rowid_r and L.rowid_r == L.rowid_w) and 'off (the game\'s row update changed; not found)')
     or 'ready', string.format('; names redone %d (game writes %d)', fix.done, stats.writes), '\n')
-  local taken = rawget(_G, 'ChefSeafArtilleryLoadoutHudPlus')       -- (1.1.1) how HD2 HUD+ took the add-on
-  if type(taken) == 'table' and taken.how then f:write('HD2 HUD+ add-on loaded: ', tostring(taken.how), '\n') end
-  f:write('HD2 HUD+ add-on: ', hp.state and (hp.state .. (hp.detail ~= nil and (' (' .. tostring(hp.detail) .. ')') or '')
-      .. ((HP.moves or 0) > 0 and string.format('; HUD+ rebuilt its panel elsewhere %d times, found again each time', HP.moves) or ''))
-    or (cover.hudplus and 'not run yet (it runs while HUD+\'s stratagem list is open)')
-    or 'HD2 HUD+ not seen', '\n')
+  f:write('HD2 HUD+ panel: ', hx_line(), '\n')
   f:write('game addresses: ', tostring(session.layout), session.scan_seconds and string.format(' (%.2f s)', session.scan_seconds) or '', '\n')
   f:write('drawing: ', gui.state, '; ', tostring(gui.icon_state or 'icons not tried yet'),
           gui.update ~= nil and ('; bitmaps ' .. (gui.update and 'moved in place' or 'replaced')) or '', '\n')
@@ -1149,7 +1698,7 @@ rawset(_G, 'update', function(...)
     end
     if not ok then
       broken, last_error, SS.status = true, 'tick: ' .. tostring(e), 'off'
-      HP.on = false; pcall(hp_sync, hp_none)      -- ((1.1.0 review) HD2 HUD+'s panel never keeps an old list)
+      pcall(hx_closed)                           -- (2.0.0) HD2 HUD+'s panel never keeps an old list
       event(last_error)
       pcall(release_gui)                         -- ((1.0.1 review) the world checked first here too)
       if fix.pending then pcall(fix_restore) end     -- never leave the row's id at 0
@@ -1165,6 +1714,7 @@ end)
 if type(game_shutdown) == 'function' then
   rawset(_G, 'shutdown', function(...)
     pcall(icons_proven)                          -- closed normally with icons shown: they work
+    pcall(hx_proven, true)
     pcall(write_log)
     return game_shutdown(...)
   end)
