@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0
+
+- **Works with the new HD2 HUD+:** HUD+'s October update replaced its add-on system, which turned the icons off on HUD+'s panel. They're back.
+- **No longer depends on HUD+'s add-on system:** the mod now finds HUD+'s stratagem panel (the game's own panel) by itself and attaches the icons to its SEAF Artillery row with the game's own UI code, so HUD+ updates no longer need an update of this mod unless HUD+ stops using the game's stratagem panel.
+- **Safety checks:** it checks the row, the panel and its icons before every UI call, and if a game ever closed while it was first trying this, the next start skips it once (the log says so).
+
 ## 1.1.1
 
 - **Works with HD2 HUD+ 0.2.4:** the shells show on its stratagem panel again (with 1.1.0 they didn't on 0.2.4).
