@@ -14,12 +14,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import patch_writer
 
-VERSION = '1.1.1'
+VERSION = '2.0.0'
 GUID_RELEASE = 'b6c4578a-d422-4328-b1a4-517cfc8df35e'
 GUID_TEST = '88435314-fc5c-4a96-865d-1e233b675e5c'      # Tester and numbered test builds
 LUA, TEXTURE = 0xa14e8dfa2cd117e2, 0xcd4238c6a0c69e32
 ADDON = 'mods/chef/seaf_artillery_loadout'
-HUDPLUS_PART = 'mods/chef/seaf_artillery_loadout_hudplus'   # (1.1.0) the HD2 HUD+ add-on
 ANTON = os.path.join(HERE, 'fonts', 'anton-latin-400-normal.ttf')
 
 
@@ -172,16 +171,8 @@ def main():
     for bad in ('/home/', '/mnt/', 'D:\\', 'C:\\', 'Users\\'):
         assert bad not in src, 'not sanitized: ' + bad
     open(os.path.join(out, 'addon.built.lua'), 'w', encoding='utf-8').write(src)
-    # (1.1.0) the HD2 HUD+ add-on: its own Lua resource, found by HUD+ through its first line (Bingus skips it)
-    part = open(os.path.join(HERE, 'lua', 'seaf_artillery_loadout_hudplus.lua'), encoding='utf-8').read()
-    a = "local VERSION = '%s'" % VERSION
-    assert part.count(a) == 1 and part.startswith('local HD2_HUD_ADDON = "%s"\n' % HUDPLUS_PART), 'HUD+ add-on header'
-    part = part.replace(a, "local VERSION = '%s'" % full)
-    for bad in ('/home/', '/mnt/', 'D:\\', 'C:\\', 'Users\\'):
-        assert bad not in part, 'not sanitized: ' + bad
-    open(os.path.join(out, 'hudplus.built.lua'), 'w', encoding='utf-8').write(part)
-    toc, gpu, stream = patch_writer.write([(resource_hash(ADDON), LUA, lua_resource(src), b'', b'', 64),
-                                           (resource_hash(HUDPLUS_PART), LUA, lua_resource(part), b'', b'', 64)] + textures,
+    # (2.0.0) no HD2 HUD+ add-on resource any more: the addon draws on HUD+'s panel itself
+    toc, gpu, stream = patch_writer.write([(resource_hash(ADDON), LUA, lua_resource(src), b'', b'', 64)] + textures,
                                           [(LUA, 64), (TEXTURE, 64)])
     patch_writer.check(toc, gpu, stream)
     base = os.path.join(pkg, '9ba626afa44a3aa3.patch_0')
